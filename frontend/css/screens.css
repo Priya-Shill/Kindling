@@ -681,9 +681,6 @@ dialog::backdrop { background: rgba(2, 4, 10, 0.6); backdrop-filter: blur(4px); 
 dialog h3 { font-family: var(--font-display); font-weight: 400; font-size: 28px; margin-bottom: 10px; }
 dialog p { font-size: 14px; color: var(--muted); margin-bottom: 20px; }
 dialog .field { margin-bottom: 20px; }
-dialog .dialog-list { font-size: 14px; color: var(--muted); line-height: 1.5; margin: 0 0 20px 18px; display: grid; gap: 10px; }
-dialog a { color: var(--warm); text-decoration: none; }
-dialog a:hover { text-decoration: underline; text-underline-offset: 2px; }
 .dialog-actions { display: flex; justify-content: flex-end; gap: 10px; }
 .dialog-actions .plain { padding: 6px 14px; font-size: 13px; color: var(--muted); }
 

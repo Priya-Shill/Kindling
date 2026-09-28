@@ -115,8 +115,6 @@ def init_db():
     }
     if "name" not in existing_user_columns:
         conn.execute("ALTER TABLE users ADD COLUMN name TEXT")
-    if "seen_privacy_notice" not in existing_user_columns:
-        conn.execute("ALTER TABLE users ADD COLUMN seen_privacy_notice INTEGER NOT NULL DEFAULT 0")
 
     conn.commit()
     conn.close()
@@ -297,22 +295,6 @@ def get_user_by_email(email: str) -> sqlite3.Row | None:
     conn.close()
 
     return row
-
-
-def mark_privacy_notice_seen(user_id: str) -> None:
-    """
-    Records that this real account has seen and dismissed the one-time
-    onboarding notice - a real column on the users row, not a client-
-    side flag, so it doesn't reappear on a new device or after
-    clearing browser storage, and never shows again for this account.
-    """
-    conn = get_db()
-    conn.execute(
-        "UPDATE users SET seen_privacy_notice = 1 WHERE id = ?",
-        (user_id,)
-    )
-    conn.commit()
-    conn.close()
 
 
 def add_message(session_id: str, sender: str, content: str) -> None:

@@ -45,7 +45,6 @@ from db import (
     get_user_content_fingerprint,
     create_user,
     get_user_by_email,
-    mark_privacy_notice_seen,
     get_user_by_id,
     get_sessions_for_user,
     set_session_title,
@@ -340,7 +339,6 @@ class AuthResponse(BaseModel):
     token: str
     email: str
     name: str
-    seen_privacy_notice: bool
 
 # ── Authentication ────────────────────────────────────────────
 
@@ -411,7 +409,7 @@ def signup(req: SignupRequest) -> AuthResponse:
         raise HTTPException(status_code=409, detail="An account with this email already exists.")
 
     normalized_email = email.strip().lower()
-    return AuthResponse(token=user_id, email=normalized_email, name=display_name(name, normalized_email), seen_privacy_notice=False)
+    return AuthResponse(token=user_id, email=normalized_email, name=display_name(name, normalized_email))
 
 
 @app.post("/api/auth/login", response_model=AuthResponse)
@@ -450,27 +448,7 @@ def login(req: LoginRequest, request: Request) -> AuthResponse:
             detail="That password isn't right. Try again or reset it."
         )
 
-    return AuthResponse(
-        token=user["id"], email=user["email"], name=display_name(user["name"], user["email"]),
-        seen_privacy_notice=bool(user["seen_privacy_notice"])
-    )
-
-
-class PrivacyNoticeSeenRequest(BaseModel):
-    token: str
-
-
-@app.post("/api/auth/privacy-notice/seen")
-def privacy_notice_seen(req: PrivacyNoticeSeenRequest):
-    """
-    Records that the signed-in account has dismissed the one-time
-    onboarding notice - a real column on their user row (see
-    mark_privacy_notice_seen), not a client-side flag, so it never
-    reappears on another device or after clearing browser storage.
-    """
-    user_id = require_valid_token(req.token)
-    mark_privacy_notice_seen(user_id)
-    return {"status": "success"}
+    return AuthResponse(token=user["id"], email=user["email"], name=display_name(user["name"], user["email"]))
 
 
 class GoogleAuthRequest(BaseModel):
@@ -516,10 +494,7 @@ def google_login(req: GoogleAuthRequest) -> AuthResponse:
     # An existing password account with this verified email just logs
     # straight into that same account - one identity per email.
 
-    return AuthResponse(
-        token=user["id"], email=user["email"], name=display_name(user["name"], user["email"]),
-        seen_privacy_notice=bool(user["seen_privacy_notice"])
-    )
+    return AuthResponse(token=user["id"], email=user["email"], name=display_name(user["name"], user["email"]))
 
 
 def resolve_user_id(token: Optional[str]) -> Optional[str]:

@@ -286,8 +286,6 @@
 
             location.hash = redirect;
 
-            if (!data.seen_privacy_notice) showOnboardingModal();
-
         }
 
         catch (error) {
@@ -347,8 +345,6 @@
                 if (remembered) redirect = remembered;
             } catch (error) {}
             location.hash = redirect;
-
-            if (!data.seen_privacy_notice) showOnboardingModal();
         }
         catch (error) {
             authErr.textContent = 'Something went wrong on our side. Please try again.';
@@ -384,54 +380,6 @@
             authErr.textContent = "Password reset isn't available yet.";
         });
     }
-
-    /* =====================================================
-       ONE-TIME ONBOARDING NOTICE
-       Shown once right after a real first sign-up (or the first
-       login/Google sign-in that still has an unacknowledged real
-       account - e.g. they closed the tab before dismissing it once).
-       The real seen_privacy_notice column on the account (see
-       backend/main.py, backend/db.py) is what actually prevents it
-       from coming back, on any device - showOnboardingModal() only
-       ever runs once per successful auth response that says it
-       hasn't been seen yet.
-       ===================================================== */
-
-    const onboardingDialog = $('#onboardingDialog'), onboardingAck = $('#onboardingAck');
-    let onboardingAcked = false;
-
-    function showOnboardingModal() {
-        onboardingAcked = false;
-        onboardingDialog.showModal();
-    }
-
-    async function acknowledgeOnboarding() {
-        if (onboardingAcked) return;
-        onboardingAcked = true;
-        if (onboardingDialog.open) onboardingDialog.close();
-
-        try {
-            await fetch(`${K.API_BASE_URL}/api/auth/privacy-notice/seen`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ token: K.getAuthToken() })
-            });
-        }
-        catch (error) {
-            // Nothing useful to show the student here - worst case it
-            // shows once more next time they sign in, which is a far
-            // safer failure than silently pretending it's acknowledged.
-        }
-    }
-
-    onboardingAck.addEventListener('click', acknowledgeOnboarding);
-    // Escape (native <dialog> "cancel") should still work, per spec -
-    // just treated as the same real acknowledgment as the button,
-    // never a silent dismiss that leaves the account's real flag unset.
-    onboardingDialog.addEventListener('cancel', e => {
-        e.preventDefault();
-        acknowledgeOnboarding();
-    });
 
     applySignedInUI();
 
