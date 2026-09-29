@@ -13,6 +13,17 @@
     gsvg.setAttribute('viewBox', '-540 -480 1080 960');
 
     const panel = $('#graphPanel');
+    const panelContent = $('#graphPanelContent');
+
+    // Fullscreen-only: the info panel is hidden by default and slides
+    // in over the graph when a node is picked - fsPanelOpen tracks
+    // that independently of `selected` so entering fullscreen always
+    // starts closed, even if a node was already selected beforehand.
+    let fsPanelOpen = false;
+    function setFsPanelOpen(open) {
+        fsPanelOpen = open;
+        panel.classList.toggle('is-open', open);
+    }
 
     let treeNodes = [], treeEdges = [];
     let byId = {};
@@ -58,7 +69,7 @@
             } catch (e) {}
         }
 
-        panel.innerHTML = `
+        panelContent.innerHTML = `
             <p class="eyebrow">Career graph</p>
             <h2 class="display">Combining your conversations</h2>
             <p class="lede">Building your combined career map - this can take a minute the first time. Once it's ready, it'll load instantly from here on.</p>
@@ -70,7 +81,7 @@
             try { layer.innerHTML = ''; } catch (e) {}
         }
 
-        panel.innerHTML = `
+        panelContent.innerHTML = `
             <p class="eyebrow">Career graph</p>
             <h2 class="display">Your map is waiting</h2>
             <p class="lede">${esc(message)}</p>
@@ -84,7 +95,55 @@
         `;
     }
 
-    async function loadTree() {
+    // The free-tier backend spins down when idle and can take up to
+    // ~30-50s to wake back up on the next request, which used to look
+    // like a flat "we couldn't reach the server" failure with an
+    // empty graph. Shown while a fetch is in flight or being retried,
+    // never a permanent state.
+    function renderMapping() {
+        if (layer) {
+            try {
+                layer.innerHTML = `
+                    <text text-anchor="middle" x="0" y="0" fill="#a0aec0" font-size="15">Mapping your directions...</text>
+                `;
+            } catch (e) {}
+        }
+
+        panelContent.innerHTML = `
+            <p class="eyebrow">Career graph</p>
+            <h2 class="display">Mapping your directions</h2>
+            <p class="lede">This can take a little longer if the server just woke up.</p>
+        `;
+    }
+
+    // The genuine "we tried and it's still not reachable" state, after
+    // the retry schedule is exhausted. Unlike renderEmpty (which
+    // correctly points a student with no real data yet to Explore),
+    // this is a reachability failure - the fix is to retry the same
+    // request, never to navigate away to chat.
+    function renderServerError() {
+        if (layer) {
+            try { layer.innerHTML = ''; } catch (e) {}
+        }
+
+        panelContent.innerHTML = `
+            <p class="eyebrow">Career graph</p>
+            <h2 class="display">Your map is waiting</h2>
+            <p class="lede">We couldn't reach the server. Please try again.</p>
+            <div style="margin-top:20px;">
+                <button type="button" class="btn-gold sm" id="graphRetryBtn">Try again</button>
+            </div>
+        `;
+        $('#graphRetryBtn')?.addEventListener('click', () => loadTree());
+    }
+
+    const RETRY_DELAYS_MS = [2000, 5000, 10000];
+
+    function delay(ms) {
+        return new Promise(resolve => setTimeout(resolve, ms));
+    }
+
+    async function loadTree(attempt = 0) {
 
         const combined = K.isConnectThreadsOn();
         const sessionId = K.getResultsSessionId();
@@ -94,9 +153,12 @@
             return;
         }
 
-        try {
-
+        if (attempt === 0) {
             if (combined) renderLoadingCombined();
+            else renderMapping();
+        }
+
+        try {
 
             const scopeParam = combined ? '&scope=all' : '';
             const response = await fetch(`${K.API_BASE_URL}/api/career-tree/${sessionId}?token=${encodeURIComponent(K.getAuthToken())}${scopeParam}`);
@@ -107,6 +169,9 @@
                 return;
             }
 
+            // A 5xx here is usually the proxy answering while the free-tier
+            // instance is still booting, not a real application error -
+            // treat it the same as a network failure and retry.
             if (!response.ok) throw new Error(`Server returned ${response.status}`);
 
             const data = await response.json();
@@ -135,8 +200,16 @@
         }
 
         catch (error) {
-            console.error('Failed to load career tree:', error);
-            renderEmpty("We couldn't reach the server. Please try again.");
+            console.error(`Failed to load career tree (attempt ${attempt + 1}):`, error);
+
+            if (attempt < RETRY_DELAYS_MS.length) {
+                if (!combined) renderMapping();
+                await delay(RETRY_DELAYS_MS[attempt]);
+                await loadTree(attempt + 1);
+                return;
+            }
+
+            renderServerError();
         }
 
     }
@@ -388,7 +461,7 @@
 
     function renderOverview() {
         const areaIds = childrenOf.you || [];
-        panel.innerHTML = `
+        panelContent.innerHTML = `
       <p class="eyebrow">Career graph</p>
       <h2 class="display">A universe<br>of possibilities</h2>
       <p class="lede">Fields and careers connected to what you've been curious about. Select any star to explore it here.</p>
@@ -424,7 +497,7 @@
 
         const branchLabel = branchSectionLabel[node.type];
 
-        panel.innerHTML = `
+        panelContent.innerHTML = `
       <button class="link-btn" data-overview>
         <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M11 6H2M5.5 2.5 2 6l3.5 3.5" stroke="currentColor" stroke-width="1.3" fill="none"/></svg>Back to the whole map</button>
       <p class="node-kind"><i style="background:${color};box-shadow:0 0 8px ${color}"></i>${kindName[node.type] || ''}</p>
@@ -506,8 +579,12 @@
             renderNode(id);
             activeArea = areaAxisFor(id);
             activeStartedAt = Date.now();
+            if (graphLayout.classList.contains('is-fullscreen')) setFsPanelOpen(true);
         }
-        else renderOverview();
+        else {
+            renderOverview();
+            setFsPanelOpen(false);
+        }
     }
 
     panel.addEventListener('click', e => {
@@ -602,6 +679,11 @@
     const fsElement = () => document.fullscreenElement || document.webkitFullscreenElement;
     const fsSupported = !!(graphLayout.requestFullscreen || graphLayout.webkitRequestFullscreen);
 
+    // Distinct expand/collapse-arrows icon so this no longer reads as
+    // a near-duplicate of the zoomFit corner-bracket icon.
+    const EXPAND_ICON = '<path d="M1 1l4.5 4.5M13 13l-4.5-4.5" stroke="currentColor" stroke-width="1.3" fill="none" stroke-linecap="round"/><path d="M1 5V1h4M13 9v4H9" stroke="currentColor" stroke-width="1.3" fill="none" stroke-linecap="round" stroke-linejoin="round"/>';
+    const COLLAPSE_ICON = '<path d="M5.5 5.5 1 1M8.5 8.5 13 13" stroke="currentColor" stroke-width="1.3" fill="none" stroke-linecap="round"/><path d="M5 1v4H1M9 13v-4h4" stroke="currentColor" stroke-width="1.3" fill="none" stroke-linecap="round" stroke-linejoin="round"/>';
+
     if (fsBtn) {
         fsBtn.hidden = !fsSupported;
         if (fsSupported) {
@@ -612,7 +694,18 @@
                 const active = fsElement() === graphLayout;
                 graphLayout.classList.toggle('is-fullscreen', active);
                 fsBtn.setAttribute('aria-pressed', String(active));
-                fsBtn.setAttribute('aria-label', active ? 'Exit fullscreen' : 'Enter fullscreen');
+                const label = active ? 'Exit full screen' : 'Full screen';
+                fsBtn.setAttribute('aria-label', label);
+                fsBtn.setAttribute('title', label);
+                const svg = fsBtn.querySelector('svg');
+                if (svg) svg.innerHTML = active ? COLLAPSE_ICON : EXPAND_ICON;
+
+                // Hidden by default on entering fullscreen (even if a
+                // node was already selected before), and cleaned up
+                // when leaving - Esc closes fullscreen itself but was
+                // never meant to be relied on to close the panel too.
+                setFsPanelOpen(false);
+
                 if (active) {
                     if (sky) graphLayout.insertBefore(sky, graphLayout.firstChild);
                     if (nebula) graphLayout.insertBefore(nebula, graphLayout.firstChild);
@@ -625,6 +718,17 @@
             document.addEventListener('webkitfullscreenchange', syncFullscreenState);
         }
     }
+
+    $('#graphPanelClose')?.addEventListener('click', () => setFsPanelOpen(false));
+
+    // Fullscreen only: clicking empty graph space (not a node or the
+    // toolbar/filter) dismisses the slide-over panel without touching
+    // the underlying selection.
+    frame.addEventListener('click', e => {
+        if (!fsPanelOpen || !graphLayout.classList.contains('is-fullscreen')) return;
+        if (e.target.closest('.graph-tools, .graph-filter, .node')) return;
+        setFsPanelOpen(false);
+    });
 
     let drag = null, dragMoved = false;
     frame.addEventListener('pointerdown', e => { if (e.target.closest('.graph-tools, .graph-filter')) return; drag = { sx: e.clientX, sy: e.clientY, ox: view.x, oy: view.y }; dragMoved = false; });
