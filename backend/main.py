@@ -304,6 +304,11 @@ class MessageResponse(BaseModel):
     reply: str
     question_index: int
     total_questions: int
+    # True only when turn 7 actually produced a scored profile. The
+    # insufficient-content bailout also lands on question_index ==
+    # total_questions (same turn), so the frontend needs this separate
+    # flag to tell a real completion apart from that bailout.
+    intake_complete: bool = False
     # Set only on an introRequest reply — two real tappable choice
     # labels the frontend renders as starter-chip-style buttons.
     choices: Optional[List[str]] = None
@@ -655,6 +660,7 @@ def chat_message(req: MessageRequest) -> MessageResponse:
                     reply=INSUFFICIENT_CONTENT_MESSAGE,
                     question_index=TOTAL_PHASE1_QUESTIONS,
                     total_questions=TOTAL_PHASE1_QUESTIONS,
+                    intake_complete=False,
                 )
 
             # Normal scoring flow
@@ -670,6 +676,7 @@ def chat_message(req: MessageRequest) -> MessageResponse:
                 reply=CLOSING_MESSAGE,
                 question_index=TOTAL_PHASE1_QUESTIONS,
                 total_questions=TOTAL_PHASE1_QUESTIONS,
+                intake_complete=True,
             )
 
         # Turns 1–6: normal follow-up

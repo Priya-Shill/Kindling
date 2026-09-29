@@ -14,7 +14,7 @@
     const { $, $$, esc } = K;
 
     const feed = $('#feed'), form = $('#composer'), input = $('#ask'), sendBtn = $('.send', form);
-    const threadProgress = $('#threadProgress');
+    const threadProgress = $('#threadProgress'), threadProgressFill = $('#threadProgressFill'), threadProgressLabel = $('#threadProgressLabel');
 
     const threadsSidebar = $('#threadsSidebar'), threadsList = $('#threadsList');
     const threadsCollapseBtn = $('#threadsCollapse'), threadsExpandBtn = $('#threadsExpand');
@@ -32,7 +32,7 @@
         'Why do some ideas spread?'
     ];
 
-    let questionIndex = 1;
+    let questionIndex = 0; // real answers given so far in the 7-question intake
     let totalQuestions = 7;
     let isLoading = false;
     let started = false;
@@ -43,9 +43,18 @@
 
     function updateProgress() {
         if (!threadProgress) return;
-        threadProgress.textContent = typeof totalQuestions === 'number' && questionIndex <= totalQuestions
-            ? `Question ${questionIndex} of ${totalQuestions}`
-            : 'Open exploration';
+        const inIntake = typeof totalQuestions === 'number' && questionIndex <= totalQuestions;
+
+        threadProgress.hidden = !inIntake;
+        threadProgressLabel.hidden = inIntake;
+
+        if (inIntake) {
+            const pct = Math.max(0, Math.min(100, Math.round((questionIndex / totalQuestions) * 100)));
+            threadProgressFill.style.width = `${pct}%`;
+            threadProgress.setAttribute('aria-valuenow', String(questionIndex));
+            threadProgress.setAttribute('aria-valuemax', String(totalQuestions));
+            threadProgress.setAttribute('aria-label', `Question ${questionIndex} of ${totalQuestions} answered`);
+        }
     }
 
     function setLoading(loading) {
@@ -59,6 +68,21 @@
         d.className = 'note-user';
         d.textContent = text;
         feed.appendChild(d);
+        scrollFeed();
+    }
+
+    // Shown once, right when the 7-question intake finishes - a clear,
+    // obvious next step alongside the composer below, which stays
+    // fully usable (this never disables it or navigates on its own).
+    function addCompletionCard() {
+        const wrap = document.createElement('div');
+        wrap.className = 'intake-complete-card';
+        wrap.innerHTML = `
+            <p class="intake-complete-title">Your career profile is ready</p>
+            <p class="intake-complete-sub">See how what you shared connects to real careers, or keep chatting below to explore further.</p>
+            <a href="#graph" class="btn-gold intake-complete-cta">See your career matches <svg width="14" height="14"><use href="#arrow"/></svg></a>
+        `;
+        feed.appendChild(wrap);
         scrollFeed();
     }
 
@@ -613,7 +637,7 @@
 
             showOccupationContext(context);
 
-            questionIndex = 1;
+            questionIndex = 0;
             updateProgress();
 
         }
@@ -655,7 +679,7 @@
             }
 
             if (typeof data.user_messages_count === 'number') {
-                questionIndex = data.user_messages_count + 1;
+                questionIndex = data.user_messages_count;
             }
 
             updateProgress();
@@ -724,6 +748,15 @@
 
             if (typeof data.question_index === 'number') questionIndex = data.question_index;
             if (typeof data.total_questions === 'number') totalQuestions = data.total_questions;
+
+            // Only a real scored completion shows the card - the
+            // insufficient-content bailout lands on this same turn
+            // (question_index === total_questions) but never scores
+            // anything, so it relies on this separate flag rather
+            // than the turn numbers alone.
+            if (data.intake_complete === true) {
+                addCompletionCard();
+            }
 
             updateProgress();
             scrollFeed();

@@ -193,7 +193,11 @@
               <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M1 3h10M1 6h10M1 9h10" stroke="currentColor" stroke-width="1.3" stroke-linecap="round"/></svg>
               Threads
             </button>
-            <span class="thread-title"><svg><use href="#spark"/></svg><span id="threadProgress">Question 1 of 7</span></span>
+            <span class="thread-title">
+              <svg><use href="#spark"/></svg>
+              <span class="thread-progress-track" id="threadProgress" role="progressbar" aria-valuemin="0" aria-valuemax="7" aria-valuenow="0" aria-label="Intake progress"><span class="thread-progress-fill" id="threadProgressFill"></span></span>
+              <span id="threadProgressLabel" hidden>Open exploration</span>
+            </span>
           </div>
           <div class="feed" id="feed" aria-live="polite"></div>
           <form class="composer" id="composer" autocomplete="off">
