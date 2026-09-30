@@ -21,6 +21,7 @@ API concern.
 """
 
 import sys
+import json
 import hashlib
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -65,6 +66,58 @@ def _user_evidence_text(messages: list[dict]) -> str:
     return "\n".join(user_lines)[:3000]
 
 
+def _why_connected_job(title: str, desc: str, evidence: str, pattern_label: str) -> str:
+    """Wraps generate_why_connected's (why, relevant) tuple as a JSON
+    string so it can go through the same generic cache-and-apply job
+    machinery as every other (plain-string) generated field."""
+    why, relevant = generate_why_connected(title, desc, evidence, pattern_label)
+    return json.dumps({"why": why, "relevant": relevant})
+
+
+def _apply_why(node: dict, value: str) -> None:
+    data = json.loads(value)
+    node["why"] = data["why"]
+    node["relevant"] = data["relevant"]
+
+
+def _prune_irrelevant_careers(tree: dict) -> dict:
+    """
+    Drops career nodes whose only real link to the student is the
+    broad RIASEC-style pattern (node["relevant"] is False), regardless
+    of how well they scored on RIASEC/FAISS similarity - a real
+    student quote is now required, not just a personality-pattern
+    overlap. A field or area that loses every one of its children this
+    way is a dead end and gets dropped too, same "don't show an empty
+    branch" rule career_tree.py already applies to patterns with zero
+    real candidates in the first place.
+    """
+    keep_ids = {n["id"] for n in tree["nodes"] if n["type"] != "career" or n.get("relevant", True)}
+    nodes = [n for n in tree["nodes"] if n["id"] in keep_ids]
+    edges = [e for e in tree["edges"] if e["source"] in keep_ids and e["target"] in keep_ids]
+
+    changed = True
+    while changed:
+        changed = False
+        children_of = {}
+        for e in edges:
+            if e["kind"] == "branch":
+                children_of.setdefault(e["source"], []).append(e["target"])
+        for n in list(nodes):
+            if n["type"] in ("field", "area") and not children_of.get(n["id"]):
+                dead_id = n["id"]
+                nodes = [x for x in nodes if x["id"] != dead_id]
+                edges = [e for e in edges if e["source"] != dead_id and e["target"] != dead_id]
+                changed = True
+
+    if len(nodes) <= 1:
+        return {"nodes": [{"id": "you", "type": "hub", "label": "You"}], "edges": []}
+
+    for n in nodes:
+        n.pop("relevant", None)
+
+    return {"nodes": nodes, "edges": edges}
+
+
 def _run_job(job):
     cache_key, kind, generate_fn, apply_fn = job
     value = generate_fn()
@@ -84,6 +137,8 @@ def enrich_tree_with_ai(tree: dict, messages: list[dict]) -> dict:
     """
     evidence_text = _user_evidence_text(messages)
     evidence_hash = hashlib.sha256(evidence_text.encode("utf-8")).hexdigest()[:16]
+
+    nodes_by_id = {n["id"]: n for n in tree["nodes"]}
 
     careers_by_field = {}
     for node in tree["nodes"]:
@@ -128,12 +183,19 @@ def enrich_tree_with_ai(tree: dict, messages: list[dict]) -> dict:
             why_key = f"why:{soc}:{evidence_hash}"
             cached = get_cached_string(why_key)
             if cached is not None:
-                node["why"] = cached
+                cached_data = json.loads(cached)
+                node["why"] = cached_data["why"]
+                node["relevant"] = cached_data["relevant"]
             else:
+                field_node = nodes_by_id.get(node["parent"])
+                area_node = nodes_by_id.get(field_node["parent"]) if field_node else None
+                pattern_label = area_node["label"] if area_node else "what you've explored"
+
                 jobs.append((
                     why_key, "why_connected",
-                    lambda title=node["fullTitle"], desc=node.get("description", ""): generate_why_connected(title, desc, evidence_text),
-                    lambda value, n=node: n.__setitem__("why", value),
+                    lambda title=node["fullTitle"], desc=node.get("description", ""), pat=pattern_label:
+                        _why_connected_job(title, desc, evidence_text, pat),
+                    lambda value, n=node: _apply_why(n, value),
                 ))
 
             task_ids = node.get("taskIds", [])
@@ -162,4 +224,4 @@ def enrich_tree_with_ai(tree: dict, messages: list[dict]) -> dict:
                 apply_fn, value = future.result()
                 apply_fn(value)
 
-    return tree
+    return _prune_irrelevant_careers(tree)

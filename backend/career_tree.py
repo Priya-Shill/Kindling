@@ -10,6 +10,7 @@ group title), never invented text.
 
 import sys
 import csv
+import math
 from pathlib import Path
 from collections import defaultdict
 
@@ -272,7 +273,20 @@ def select_occupations(scores: dict, shown_patterns: list, high_points: dict,
             if pattern in stalled or total_selected() >= TARGET_LEAF_COUNT:
                 continue
             prospective_total = total_selected() + 1
-            if len(shown_patterns) > 1 and (len(selected_by_pattern[pattern]) + 1) > MAX_PATTERN_SHARE * prospective_total:
+            # Ceiling, not a strict fractional cap: with few shown
+            # patterns (e.g. 2, each already at parity), a strict "> 0.5
+            # of prospective_total" check blocks BOTH patterns on the
+            # exact same round forever - (2+1) > 0.5*5 is true for every
+            # pattern simultaneously, so neither ever grows past 2 even
+            # with 60+ real candidates still sitting in the bucket
+            # (found while verifying real students never got real
+            # occupations like Musicians and Singers surfaced at all,
+            # regardless of the topic-relevance filter above it - this
+            # was blocking the candidate before that filter ever ran).
+            # Rounding the allowed share up still caps runaway
+            # domination by one pattern, it just doesn't deadlock at
+            # small integer counts.
+            if len(shown_patterns) > 1 and (len(selected_by_pattern[pattern]) + 1) > math.ceil(MAX_PATTERN_SHARE * prospective_total):
                 continue
             if try_add(pattern):
                 progressed = True
