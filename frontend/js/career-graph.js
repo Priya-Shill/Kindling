@@ -668,56 +668,20 @@
 
     // ── Fullscreen ───────────────────────────────────────────
     // Fullscreens #graphLayout (not just the tree) so the starfield
-    // canvas, reparented into it for the duration, keeps drifting
-    // behind the tree instead of vanishing outside the fullscreened
-    // subtree. Restored to its original spot on exit either way -
-    // button, Escape, or browser chrome all fire fullscreenchange.
+    // canvas, reparented into it for the duration by the shared
+    // K.setupFullscreen helper, keeps drifting behind the tree instead
+    // of vanishing outside the fullscreened subtree.
     const fsBtn = $('#graphFullscreen'), graphLayout = $('#graphLayout');
-    const sky = document.getElementById('sky'), nebula = $('.nebula');
-    const requestFs = el => (el.requestFullscreen || el.webkitRequestFullscreen)?.call(el);
-    const exitFs = () => (document.exitFullscreen || document.webkitExitFullscreen)?.call(document);
-    const fsElement = () => document.fullscreenElement || document.webkitFullscreenElement;
-    const fsSupported = !!(graphLayout.requestFullscreen || graphLayout.webkitRequestFullscreen);
 
-    // Distinct expand/collapse-arrows icon so this no longer reads as
-    // a near-duplicate of the zoomFit corner-bracket icon.
-    const EXPAND_ICON = '<path d="M1 1l4.5 4.5M13 13l-4.5-4.5" stroke="currentColor" stroke-width="1.3" fill="none" stroke-linecap="round"/><path d="M1 5V1h4M13 9v4H9" stroke="currentColor" stroke-width="1.3" fill="none" stroke-linecap="round" stroke-linejoin="round"/>';
-    const COLLAPSE_ICON = '<path d="M5.5 5.5 1 1M8.5 8.5 13 13" stroke="currentColor" stroke-width="1.3" fill="none" stroke-linecap="round"/><path d="M5 1v4H1M9 13v-4h4" stroke="currentColor" stroke-width="1.3" fill="none" stroke-linecap="round" stroke-linejoin="round"/>';
-
-    if (fsBtn) {
-        fsBtn.hidden = !fsSupported;
-        if (fsSupported) {
-            fsBtn.addEventListener('click', () => {
-                if (fsElement() === graphLayout) exitFs(); else requestFs(graphLayout);
-            });
-            const syncFullscreenState = () => {
-                const active = fsElement() === graphLayout;
-                graphLayout.classList.toggle('is-fullscreen', active);
-                fsBtn.setAttribute('aria-pressed', String(active));
-                const label = active ? 'Exit full screen' : 'Full screen';
-                fsBtn.setAttribute('aria-label', label);
-                fsBtn.setAttribute('title', label);
-                const svg = fsBtn.querySelector('svg');
-                if (svg) svg.innerHTML = active ? COLLAPSE_ICON : EXPAND_ICON;
-
-                // Hidden by default on entering fullscreen (even if a
-                // node was already selected before), and cleaned up
-                // when leaving - Esc closes fullscreen itself but was
-                // never meant to be relied on to close the panel too.
-                setFsPanelOpen(false);
-
-                if (active) {
-                    if (sky) graphLayout.insertBefore(sky, graphLayout.firstChild);
-                    if (nebula) graphLayout.insertBefore(nebula, graphLayout.firstChild);
-                } else {
-                    if (sky) document.body.insertBefore(sky, document.body.firstChild);
-                    if (nebula) document.body.insertBefore(nebula, document.body.firstChild);
-                }
-            };
-            document.addEventListener('fullscreenchange', syncFullscreenState);
-            document.addEventListener('webkitfullscreenchange', syncFullscreenState);
-        }
-    }
+    K.setupFullscreen({
+        container: graphLayout,
+        button: fsBtn,
+        // Hidden by default on entering fullscreen (even if a node was
+        // already selected before), and cleaned up when leaving - Esc
+        // closes fullscreen itself but was never meant to be relied on
+        // to close the panel too.
+        onChange: () => setFsPanelOpen(false)
+    });
 
     $('#graphPanelClose')?.addEventListener('click', () => setFsPanelOpen(false));
 

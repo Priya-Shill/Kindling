@@ -310,20 +310,16 @@
 .inf-head .display { font-size: clamp(34px, 3.2vw, 46px); margin-bottom: 8px; }
 .inf-grid { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1.15fr) minmax(360px, 1fr); grid-template-rows: minmax(0, 1fr); gap: 24px; }
 .inf-card {
-  position: relative;
   min-height: 0; display: flex; flex-direction: column;
   padding: 18px 18px 16px;
   border-radius: var(--radius-panel); background: var(--panel); border: 1px solid var(--border);
 }
-.inf-card .star-map { flex: 1; min-height: 0; }
-.inf-tools {
-  position: absolute; top: 14px; right: 14px;
-  display: flex; align-items: center; gap: 6px;
-  padding: 5px; border-radius: var(--radius-pill);
-  background: var(--panel); border: 1px solid var(--border);
-  backdrop-filter: blur(10px);
-}
-.inf-tools .icon-btn { width: 30px; height: 30px; }
+/* Own positioning context for .graph-tools, separate from .inf-foot
+   below it - the toolbar used to be absolutely positioned against the
+   whole card (foot bar included), which put it right on top of the
+   "Select a star..." text at the bottom-left corner. */
+.inf-chart-frame { position: relative; flex: 1; min-height: 0; display: flex; }
+.inf-chart-frame .star-map { flex: 1; min-height: 0; }
 .inf-foot {
   flex: none; min-height: 52px;
   display: flex; align-items: center; flex-wrap: wrap; gap: 10px 14px;
@@ -345,7 +341,12 @@
   background: #05070d;
   padding: 0;
 }
-.inf-grid.is-fullscreen .inf-card { height: 100%; border-radius: 0; }
+/* Transparent instead of the normal-view panel tint, so the starfield
+   reparented into #inferenceGrid for fullscreen (see K.setupFullscreen
+   in nodes.js) reads clearly behind the radar, matching Career Graph's
+   own fullscreen frame (which has no card background either). */
+.inf-grid.is-fullscreen .inf-card { height: 100%; border-radius: 0; background: transparent; border: none; }
+.inf-grid.is-fullscreen #inferenceMap .node text { font-size: 21px; }
 .inf-grid.is-fullscreen .inf-side {
   position: absolute; top: 20px; left: 20px; bottom: 20px;
   width: min(380px, 88vw);

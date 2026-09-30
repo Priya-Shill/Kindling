@@ -90,4 +90,60 @@
         g.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fn(); } });
     };
 
+    /*
+     * Shared fullscreen behavior for Career Graph and Inference - one
+     * implementation so the two can't drift apart, and so the shared
+     * starfield (#sky/.nebula) can't be fought over by two independent
+     * fullscreenchange listeners each reparenting it. Only the
+     * container that IS fullscreen right now claims the starfield;
+     * it's only handed back to <body> once nothing at all is
+     * fullscreen, so one screen's fullscreenchange handler can never
+     * yank the starfield away from a *different* screen that just
+     * entered fullscreen in the same event tick.
+     */
+    const FS_EXPAND_ICON = '<path d="M1 1l4.5 4.5M13 13l-4.5-4.5" stroke="currentColor" stroke-width="1.3" fill="none" stroke-linecap="round"/><path d="M1 5V1h4M13 9v4H9" stroke="currentColor" stroke-width="1.3" fill="none" stroke-linecap="round" stroke-linejoin="round"/>';
+    const FS_COLLAPSE_ICON = '<path d="M5.5 5.5 1 1M8.5 8.5 13 13" stroke="currentColor" stroke-width="1.3" fill="none" stroke-linecap="round"/><path d="M5 1v4H1M9 13v-4h4" stroke="currentColor" stroke-width="1.3" fill="none" stroke-linecap="round" stroke-linejoin="round"/>';
+
+    K.setupFullscreen = function setupFullscreen({ container, button, onChange }) {
+        const requestFs = el => (el.requestFullscreen || el.webkitRequestFullscreen)?.call(el);
+        const exitFs = () => (document.exitFullscreen || document.webkitExitFullscreen)?.call(document);
+        const fsElement = () => document.fullscreenElement || document.webkitFullscreenElement;
+        const isActive = () => fsElement() === container;
+        const supported = !!(container.requestFullscreen || container.webkitRequestFullscreen);
+
+        if (!button) return { supported, isActive };
+        button.hidden = !supported;
+        if (!supported) return { supported, isActive: () => false };
+
+        const sky = document.getElementById('sky'), nebula = $('.nebula');
+
+        button.addEventListener('click', () => { isActive() ? exitFs() : requestFs(container); });
+
+        const sync = () => {
+            const active = isActive();
+            container.classList.toggle('is-fullscreen', active);
+            button.setAttribute('aria-pressed', String(active));
+            const label = active ? 'Exit full screen' : 'Full screen';
+            button.setAttribute('aria-label', label);
+            button.setAttribute('title', label);
+            const svg = button.querySelector('svg');
+            if (svg) svg.innerHTML = active ? FS_COLLAPSE_ICON : FS_EXPAND_ICON;
+
+            if (active) {
+                if (sky) container.insertBefore(sky, container.firstChild);
+                if (nebula) container.insertBefore(nebula, container.firstChild);
+            } else if (!fsElement()) {
+                if (sky && sky.parentElement !== document.body) document.body.insertBefore(sky, document.body.firstChild);
+                if (nebula && nebula.parentElement !== document.body) document.body.insertBefore(nebula, document.body.firstChild);
+            }
+
+            onChange?.(active);
+        };
+
+        document.addEventListener('fullscreenchange', sync);
+        document.addEventListener('webkitfullscreenchange', sync);
+
+        return { supported, isActive };
+    };
+
 })();

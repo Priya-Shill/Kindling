@@ -8,7 +8,10 @@
     const { $, $$, el, esc, colorOf, addGlow, drawNode, onActivate } = K;
 
     const inf = $('#inferenceMap');
-    const C = { x: 320, y: 262 }, R = 170;
+    // Enlarged from the original R:170 (with the viewBox in index.html
+    // widened to match) so the radar fills more of its card - it used
+    // to sit small with a lot of unused margin around it.
+    const C = { x: 320, y: 262 }, R = 195;
 
     let scores = {};
     const N = K.patterns.length;
@@ -16,7 +19,7 @@
     const pt = (i, r) => { const a = -Math.PI / 2 + i * 2 * Math.PI / N; return { x: C.x + Math.cos(a) * r, y: C.y + Math.sin(a) * r, c: Math.cos(a), s: Math.sin(a) }; };
 
     const evList = $('#evidenceList'), infFoot = $('#infFoot');
-    const infGrid = $('#inferenceGrid'), infSide = $('#inferenceSide');
+    const infGrid = $('#inferenceGrid'), infSide = $('#inferenceSide'), infCard = $('#inferenceCard');
 
     // Fullscreen-only: the evidence panel is hidden by default and
     // slides in over the chart when a star is picked - same pattern
@@ -75,7 +78,11 @@
             onActivate(g, () => selectTheme(t.id, true));
         });
 
-        youNode = drawNode(infNodes, { ...C, tone: 'warm' }, infGlow, { label: 'You', core: 3.5, halo: 12, lx: 0, ly: 20, anchor: 'middle' });
+        // ly pushed further down than a proportional label offset would
+        // be, since low-score axes place their own point/label right on
+        // top of center - this keeps "You" legible under that crowding
+        // rather than just scaling with the radar's own radius.
+        youNode = drawNode(infNodes, { ...C, tone: 'warm' }, infGlow, { label: 'You', core: 3.5, halo: 12, lx: 0, ly: 32, anchor: 'middle' });
         youNode.setAttribute('aria-label', 'You, show everything');
         onActivate(youNode, () => selectTheme(null));
 
@@ -216,54 +223,38 @@
     }
 
     // ── Fullscreen ───────────────────────────────────────────
-    // Same pattern as Career Graph's: fullscreens #inferenceGrid so
-    // the evidence panel can overlay the chart instead of only the
-    // fullscreened subtree; restored either way (button, Escape, or
-    // browser chrome all fire fullscreenchange).
+    // Fullscreens #inferenceGrid (not just the chart) so the starfield
+    // canvas, reparented into it for the duration by the shared
+    // K.setupFullscreen helper, keeps drifting behind the radar.
     const infFsBtn = $('#infFullscreen');
-    const requestInfFs = el => (el.requestFullscreen || el.webkitRequestFullscreen)?.call(el);
-    const exitInfFs = () => (document.exitFullscreen || document.webkitExitFullscreen)?.call(document);
-    const infFsElement = () => document.fullscreenElement || document.webkitFullscreenElement;
-    const infFsSupported = !!(infGrid.requestFullscreen || infGrid.webkitRequestFullscreen);
 
-    const EXPAND_ICON = '<path d="M1 1l4.5 4.5M13 13l-4.5-4.5" stroke="currentColor" stroke-width="1.3" fill="none" stroke-linecap="round"/><path d="M1 5V1h4M13 9v4H9" stroke="currentColor" stroke-width="1.3" fill="none" stroke-linecap="round" stroke-linejoin="round"/>';
-    const COLLAPSE_ICON = '<path d="M5.5 5.5 1 1M8.5 8.5 13 13" stroke="currentColor" stroke-width="1.3" fill="none" stroke-linecap="round"/><path d="M5 1v4H1M9 13v-4h4" stroke="currentColor" stroke-width="1.3" fill="none" stroke-linecap="round" stroke-linejoin="round"/>';
+    K.setupFullscreen({
+        container: infGrid,
+        button: infFsBtn,
+        onChange: active => {
+            // Hidden by default on entering fullscreen (even if a star
+            // was already selected before), and cleaned up when
+            // leaving - Esc closes fullscreen itself but was never
+            // meant to be relied on to close the panel too.
+            setFsPanelOpen(false);
 
-    if (infFsBtn) {
-        infFsBtn.hidden = !infFsSupported;
-        if (infFsSupported) {
-            infFsBtn.addEventListener('click', () => {
-                if (infFsElement() === infGrid) exitInfFs(); else requestInfFs(infGrid);
-            });
-            const syncInfFullscreenState = () => {
-                const active = infFsElement() === infGrid;
-                infGrid.classList.toggle('is-fullscreen', active);
-                infFsBtn.setAttribute('aria-pressed', String(active));
-                const label = active ? 'Exit full screen' : 'Full screen';
-                infFsBtn.setAttribute('aria-label', label);
-                infFsBtn.setAttribute('title', label);
-                const svg = infFsBtn.querySelector('svg');
-                if (svg) svg.innerHTML = active ? COLLAPSE_ICON : EXPAND_ICON;
-
-                // Hidden by default on entering fullscreen (even if a
-                // star was already selected before), and cleaned up
-                // when leaving - Esc closes fullscreen itself but was
-                // never meant to be relied on to close the panel too.
-                setFsPanelOpen(false);
-            };
-            document.addEventListener('fullscreenchange', syncInfFullscreenState);
-            document.addEventListener('webkitfullscreenchange', syncInfFullscreenState);
+            // The "Does this feel like you?" foot bar moves into the
+            // slide-over panel for fullscreen (so a selected star's
+            // feel buttons show alongside its evidence cards there)
+            // and back to its normal spot under the chart on exit.
+            if (active) infSide.appendChild(infFoot);
+            else infCard.appendChild(infFoot);
         }
-    }
+    });
 
     $('#infPanelClose')?.addEventListener('click', () => setFsPanelOpen(false));
 
     // Fullscreen only: clicking empty chart space (not a star node or
     // the toolbar) dismisses the slide-over panel without touching
     // the underlying selection.
-    $('#inferenceCard')?.addEventListener('click', e => {
+    infCard.addEventListener('click', e => {
         if (!fsPanelOpen || !infGrid.classList.contains('is-fullscreen')) return;
-        if (e.target.closest('.inf-tools, .node')) return;
+        if (e.target.closest('.graph-tools, .node')) return;
         setFsPanelOpen(false);
     });
 
