@@ -384,8 +384,13 @@
 
     function resolveLabelCollisions() {
         {
+            // Includes 'area' too - a lone field sits at the exact same
+            // angle as its one parent area (layoutTree centers a
+            // single child directly on the parent's own ray), so their
+            // labels can collide along that ray. Excluding area nodes
+            // here meant that specific collision could never resolve.
             const items = treeNodes
-                .filter(n => n.type === 'field' || n.type === 'career')
+                .filter(n => n.type === 'area' || n.type === 'field' || n.type === 'career')
                 .map(n => ({ node: byId[n.id], g: nodeEls[n.id] }))
                 .filter(it => it.g);
 
@@ -684,6 +689,19 @@
     });
 
     $('#graphPanelClose')?.addEventListener('click', () => setFsPanelOpen(false));
+
+    // The panel now pushes the graph area rather than overlaying it
+    // (see .map-layout.is-fullscreen .info-pane in screens.css) - once
+    // that width transition actually finishes, refit the graph to
+    // whatever space is left, same #zoomFit logic the toolbar button
+    // already uses. Filtered to the 'width' property specifically
+    // since 'padding' transitions on the same element and ends at
+    // roughly the same time, which would otherwise fire this twice.
+    panel.addEventListener('transitionend', e => {
+        if (e.propertyName !== 'width' || !graphLayout.classList.contains('is-fullscreen')) return;
+        view = { x: 0, y: 0, k: fitK() };
+        applyView();
+    });
 
     // Fullscreen only: clicking empty graph space (not a node or the
     // toolbar/filter) dismisses the slide-over panel without touching
