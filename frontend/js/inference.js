@@ -16,6 +16,17 @@
     const pt = (i, r) => { const a = -Math.PI / 2 + i * 2 * Math.PI / N; return { x: C.x + Math.cos(a) * r, y: C.y + Math.sin(a) * r, c: Math.cos(a), s: Math.sin(a) }; };
 
     const evList = $('#evidenceList'), infFoot = $('#infFoot');
+    const infGrid = $('#inferenceGrid'), infSide = $('#inferenceSide');
+
+    // Fullscreen-only: the evidence panel is hidden by default and
+    // slides in over the chart when a star is picked - same pattern
+    // as Career Graph's fsPanelOpen, independent of `currentTheme` so
+    // entering fullscreen always starts closed.
+    let fsPanelOpen = false;
+    function setFsPanelOpen(open) {
+        fsPanelOpen = open;
+        infSide.classList.toggle('is-open', open);
+    }
 
     function getStrengthLabel(value) {
         if (typeof value !== 'number') return 'No data yet';
@@ -104,6 +115,12 @@
         $$('.evidence', evList).forEach(b => { const on = b.dataset.theme === id; b.classList.toggle('is-lit', on); if (on && !first) first = b; });
         if (fromMap && first) first.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
         renderFoot(currentTheme);
+
+        if (id) {
+            if (infGrid.classList.contains('is-fullscreen')) setFsPanelOpen(true);
+        } else {
+            setFsPanelOpen(false);
+        }
     }
 
     evList.addEventListener('click', e => { const b = e.target.closest('.evidence'); if (b) selectTheme(b.dataset.theme === currentTheme ? null : b.dataset.theme); });
@@ -197,6 +214,58 @@
     function refreshScopeBar() {
         K.renderScopeBar($('#inferenceScopeBar'), loadInference);
     }
+
+    // ── Fullscreen ───────────────────────────────────────────
+    // Same pattern as Career Graph's: fullscreens #inferenceGrid so
+    // the evidence panel can overlay the chart instead of only the
+    // fullscreened subtree; restored either way (button, Escape, or
+    // browser chrome all fire fullscreenchange).
+    const infFsBtn = $('#infFullscreen');
+    const requestInfFs = el => (el.requestFullscreen || el.webkitRequestFullscreen)?.call(el);
+    const exitInfFs = () => (document.exitFullscreen || document.webkitExitFullscreen)?.call(document);
+    const infFsElement = () => document.fullscreenElement || document.webkitFullscreenElement;
+    const infFsSupported = !!(infGrid.requestFullscreen || infGrid.webkitRequestFullscreen);
+
+    const EXPAND_ICON = '<path d="M1 1l4.5 4.5M13 13l-4.5-4.5" stroke="currentColor" stroke-width="1.3" fill="none" stroke-linecap="round"/><path d="M1 5V1h4M13 9v4H9" stroke="currentColor" stroke-width="1.3" fill="none" stroke-linecap="round" stroke-linejoin="round"/>';
+    const COLLAPSE_ICON = '<path d="M5.5 5.5 1 1M8.5 8.5 13 13" stroke="currentColor" stroke-width="1.3" fill="none" stroke-linecap="round"/><path d="M5 1v4H1M9 13v-4h4" stroke="currentColor" stroke-width="1.3" fill="none" stroke-linecap="round" stroke-linejoin="round"/>';
+
+    if (infFsBtn) {
+        infFsBtn.hidden = !infFsSupported;
+        if (infFsSupported) {
+            infFsBtn.addEventListener('click', () => {
+                if (infFsElement() === infGrid) exitInfFs(); else requestInfFs(infGrid);
+            });
+            const syncInfFullscreenState = () => {
+                const active = infFsElement() === infGrid;
+                infGrid.classList.toggle('is-fullscreen', active);
+                infFsBtn.setAttribute('aria-pressed', String(active));
+                const label = active ? 'Exit full screen' : 'Full screen';
+                infFsBtn.setAttribute('aria-label', label);
+                infFsBtn.setAttribute('title', label);
+                const svg = infFsBtn.querySelector('svg');
+                if (svg) svg.innerHTML = active ? COLLAPSE_ICON : EXPAND_ICON;
+
+                // Hidden by default on entering fullscreen (even if a
+                // star was already selected before), and cleaned up
+                // when leaving - Esc closes fullscreen itself but was
+                // never meant to be relied on to close the panel too.
+                setFsPanelOpen(false);
+            };
+            document.addEventListener('fullscreenchange', syncInfFullscreenState);
+            document.addEventListener('webkitfullscreenchange', syncInfFullscreenState);
+        }
+    }
+
+    $('#infPanelClose')?.addEventListener('click', () => setFsPanelOpen(false));
+
+    // Fullscreen only: clicking empty chart space (not a star node or
+    // the toolbar) dismisses the slide-over panel without touching
+    // the underlying selection.
+    $('#inferenceCard')?.addEventListener('click', e => {
+        if (!fsPanelOpen || !infGrid.classList.contains('is-fullscreen')) return;
+        if (e.target.closest('.inf-tools, .node')) return;
+        setFsPanelOpen(false);
+    });
 
     K.onRoute.inference = () => {
         refreshScopeBar();
