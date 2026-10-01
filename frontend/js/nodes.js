@@ -146,4 +146,70 @@
         return { supported, isActive };
     };
 
+    /*
+     * Navigating away (changing location.hash) while still fullscreen
+     * left the browser showing the new page/route underneath the OS's
+     * actual fullscreen chrome, instead of a normal windowed view -
+     * exits fullscreen first, waits for that to actually finish, then
+     * navigates. Safe to call when nothing is fullscreen (navigates
+     * immediately, no-op wait).
+     */
+    K.exitFullscreenThenNavigate = function exitFullscreenThenNavigate(hash) {
+        const fsElement = () => document.fullscreenElement || document.webkitFullscreenElement;
+        if (!fsElement()) {
+            location.hash = hash;
+            return;
+        }
+        const onExit = () => {
+            document.removeEventListener('fullscreenchange', onExit);
+            document.removeEventListener('webkitfullscreenchange', onExit);
+            location.hash = hash;
+        };
+        document.addEventListener('fullscreenchange', onExit);
+        document.addEventListener('webkitfullscreenchange', onExit);
+        (document.exitFullscreen || document.webkitExitFullscreen)?.call(document);
+    };
+
+    /*
+     * Generic safety net for the same problem, for plain <a href="#x">
+     * links rendered inside a fullscreen panel (e.g. Inference's empty-
+     * state "Go to Explore Chat" link) rather than a JS-driven
+     * location.hash assignment - those already call
+     * K.exitFullscreenThenNavigate directly at their own call site.
+     * Capture-phase so it runs before the browser's own native
+     * navigation for the click.
+     */
+    /*
+     * Shared refit helper: sets an SVG's viewBox to tightly fit its
+     * own actually-rendered content (via getBBox, so it adapts to
+     * whatever is really on screen - including a fullscreen-only
+     * larger font bumping text wider than a viewBox sized only for
+     * the normal-view font size would allow, which is exactly what
+     * clipped Inference's edge labels in fullscreen: the viewBox
+     * itself didn't contain the real geometry at the bigger font,
+     * so the SVG's own implicit overflow:hidden clipped it - no
+     * amount of the *container* resizing correctly could fix that,
+     * since preserveAspectRatio="xMidYMid meet" (the default) always
+     * shows the whole declared viewBox, but can't show content that
+     * exceeds it. Re-run this after anything that can change the
+     * rendered size of that content (a fresh render, or a fullscreen
+     * class toggle that changes font-size via CSS).
+     */
+    K.fitSvgViewBox = function fitSvgViewBox(svg, padding = 20) {
+        const box = svg.getBBox();
+        if (!box.width || !box.height) return;
+        svg.setAttribute('viewBox', `${box.x - padding} ${box.y - padding} ${box.width + padding * 2} ${box.height + padding * 2}`);
+    };
+
+    K.interceptFullscreenNavLinks = function interceptFullscreenNavLinks(panelEl) {
+        panelEl.addEventListener('click', e => {
+            const a = e.target.closest('a[href^="#"]');
+            if (!a) return;
+            const fsElement = document.fullscreenElement || document.webkitFullscreenElement;
+            if (!fsElement) return;
+            e.preventDefault();
+            K.exitFullscreenThenNavigate(a.getAttribute('href').slice(1));
+        }, true);
+    };
+
 })();

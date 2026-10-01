@@ -45,14 +45,23 @@
         { ms: MONTH_MS, label: '1mo' }
     ];
 
+    // Strictly less-than: a value that reaches or exceeds a scale's
+    // own limit must bump to the NEXT tier instead, so the label is
+    // never "X of X" at the boundary - 60s formatted as "1m" sitting
+    // against a "1m" scale read as exactly "1m of 1m" with no sense
+    // of how full the bar actually was; it now reads "1m of 1h".
     function pickScale(maxMs) {
-        return TIME_SCALES.find(s => maxMs <= s.ms) || TIME_SCALES[TIME_SCALES.length - 1];
+        for (const s of TIME_SCALES) {
+            if (maxMs < s.ms) return s;
+        }
+        return TIME_SCALES[TIME_SCALES.length - 1];
     }
 
     // A row's own duration, in whatever unit reads most naturally for
     // its size - not forced into the shared scale's unit, since "3d"
     // next to a "1mo" scale is clearer than "72h of 1mo".
     function formatDuration(ms) {
+        if (ms < MINUTE_MS) return `${Math.max(1, Math.round(ms / 1000))}s`;
         if (ms < HOUR_MS) return `${Math.max(1, Math.round(ms / MINUTE_MS))}m`;
         if (ms < DAY_MS) {
             const h = Math.floor(ms / HOUR_MS), m = Math.round((ms % HOUR_MS) / MINUTE_MS);

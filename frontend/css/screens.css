@@ -238,7 +238,18 @@
   display: grid; place-items: center; color: var(--faint);
 }
 .context-bar-close:hover { color: var(--fg); background: var(--surface-elevated); }
-.doubt-chips { margin: 0 0 10px; }
+.doubt-chips {
+  display: flex; flex-wrap: nowrap; justify-content: flex-start;
+  overflow-x: auto; overflow-y: hidden;
+  max-width: none; margin: 0 0 10px; padding-bottom: 4px;
+  scrollbar-width: thin; scrollbar-color: rgba(255,255,255,.16) transparent;
+  -webkit-mask-image: linear-gradient(to right, transparent, black 16px, black calc(100% - 16px), transparent);
+  mask-image: linear-gradient(to right, transparent, black 16px, black calc(100% - 16px), transparent);
+}
+.doubt-chips::-webkit-scrollbar { height: 6px; }
+.doubt-chips::-webkit-scrollbar-thumb { background: rgba(255,255,255,.16); border-radius: 6px; }
+.doubt-chips::-webkit-scrollbar-track { background: transparent; }
+.doubt-chips .chip { flex: none; white-space: nowrap; }
 
 .composer {
   flex: none; display: flex; align-items: flex-end; gap: 10px;

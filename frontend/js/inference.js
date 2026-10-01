@@ -20,6 +20,7 @@
 
     const evList = $('#evidenceList'), infFoot = $('#infFoot');
     const infGrid = $('#inferenceGrid'), infSide = $('#inferenceSide'), infCard = $('#inferenceCard');
+    K.interceptFullscreenNavLinks(infSide);
 
     // Fullscreen-only: the evidence panel is hidden by default and
     // slides in over the chart when a star is picked - same pattern
@@ -31,13 +32,13 @@
         infSide.classList.toggle('is-open', open);
     }
 
-    function getStrengthLabel(value) {
-        if (typeof value !== 'number') return 'No data yet';
-        if (value >= 0.75) return 'Showing up often';
-        if (value >= 0.5) return 'Showing up';
-        if (value >= 0.25) return 'Starting to appear';
-        return 'Not yet showing';
-    }
+    // Same real-evidence line backend/career_tree.py's own
+    // EVIDENCE_THRESHOLD uses (that file's comment explicitly keys off
+    // this one) - below it, a pattern isn't "evidence" yet, so it's
+    // left off the list entirely rather than shown with a score-like
+    // strength tag ("Not yet showing", "Starting to appear"...),
+    // which read as a score by another name.
+    const EVIDENCE_THRESHOLD = 0.25;
 
     let infEls = {}, axisEls = {}, youNode = null, currentTheme = null;
 
@@ -86,17 +87,29 @@
         youNode.setAttribute('aria-label', 'You, show everything');
         onActivate(youNode, () => selectTheme(null));
 
+        // Fits the viewBox to what's actually drawn (see K.fitSvgViewBox
+        // in nodes.js) - a fixed viewBox sized for the normal-view font
+        // doesn't contain the larger fullscreen font's wider text, and
+        // the SVG clips anything outside its own viewBox regardless of
+        // how the container around it is sized. Re-run on every
+        // fullscreen toggle too (see K.setupFullscreen below), since
+        // that's exactly when the font-size - and so the real geometry
+        // this needs to fit - changes.
+        K.fitSvgViewBox(inf, 20);
+
         requestAnimationFrame(() => inf.classList.add('is-shown'));
     }
 
     function renderEvidence() {
-        evList.innerHTML = K.patterns.map(t => {
-            const c = colorOf[t.tone];
-            return `<li><button class="evidence" data-theme="${t.id}">
+        evList.innerHTML = K.patterns
+            .filter(t => (scores[t.key] || 0) >= EVIDENCE_THRESHOLD)
+            .map(t => {
+                const c = colorOf[t.tone];
+                return `<li><button class="evidence" data-theme="${t.id}">
         ${esc(t.description)}
-        <span class="evidence-meta"><span class="theme-tag"><i style="background:${c};box-shadow:0 0 6px ${c}"></i>${esc(t.label)}</span><span>${esc(getStrengthLabel(scores[t.key]))}</span></span>
+        <span class="evidence-meta"><span class="theme-tag"><i style="background:${c};box-shadow:0 0 6px ${c}"></i>${esc(t.label)}</span></span>
       </button></li>`;
-        }).join('');
+            }).join('');
     }
 
     function renderFoot(id) {
@@ -244,6 +257,12 @@
             // and back to its normal spot under the chart on exit.
             if (active) infSide.appendChild(infFoot);
             else infCard.appendChild(infFoot);
+
+            // The fullscreen class toggle (just applied above) changes
+            // the axis label font-size via CSS - refit so the viewBox
+            // contains the real geometry at whichever size is now
+            // active, on the way in AND the way back out.
+            requestAnimationFrame(() => K.fitSvgViewBox(inf, 20));
         }
     });
 

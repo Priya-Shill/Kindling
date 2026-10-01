@@ -14,6 +14,7 @@
 
     const panel = $('#graphPanel');
     const panelContent = $('#graphPanelContent');
+    K.interceptFullscreenNavLinks(panel);
 
     // Fullscreen-only: the info panel is hidden by default and slides
     // in over the graph when a node is picked - fsPanelOpen tracks
@@ -639,7 +640,7 @@
                 catch (error) {}
             }
 
-            location.hash = 'explore';
+            K.exitFullscreenThenNavigate('explore');
         }
 
     });

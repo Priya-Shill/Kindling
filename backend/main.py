@@ -104,8 +104,18 @@ def build_context_note(context: Optional[OccupationContext]) -> str:
     lines.append(
         "If their next message could reasonably be about this occupation "
         "(e.g. it says \"this job\", \"it\", or otherwise doesn't name a "
-        "different one), answer about THIS occupation specifically, using "
-        "only the real details above — never a different or invented one."
+        "different one), answer about THIS occupation specifically - never "
+        "swap in a different real occupation or invent one that doesn't "
+        "exist. That \"real, never invented\" rule is about WHICH "
+        "occupation this is, and about never fabricating statistics, "
+        "salary figures, or qualifications for it - it is NOT a limit on "
+        "using your own general knowledge to actually explain things well "
+        "(e.g. real styles or specialties within the field, how people "
+        "typically get into it, what a day looks like). Never refuse to "
+        "elaborate or say things like \"the description doesn't mention "
+        "that\" or \"in the description you saw\" - just answer the "
+        "question using what you genuinely know, the same as you would "
+        "for any other topic."
     )
     return "\n".join(lines)
 
@@ -885,6 +895,30 @@ def get_career_graph(session_id: str, token: str, max_results: int = MAX_RESULTS
 # In-memory cache for instant career tree rendering
 CAREER_TREE_CACHE = {}
 
+
+def invalidate_career_tree_cache_for_user(user_id: str) -> None:
+    """
+    Reflection preferences (hide/focus/pattern-adjust) are stored per
+    USER, but CAREER_TREE_CACHE below keys only by session_id + a hash
+    of that session's scores - no preference component at all. Saving
+    or removing a "Your take" hide never changed either of those, so
+    the next Career Graph load kept serving the exact pre-preference
+    tree from cache, on every thread that user has, until the scores
+    happened to change for some unrelated reason. Purges every cached
+    tree for this user - single-session and the Connect Threads
+    combined one alike - so the very next load actually rebuilds.
+    """
+    owned_session_ids = {s["session_id"] for s in get_sessions_for_user(user_id)}
+    for key in list(CAREER_TREE_CACHE.keys()):
+        # cache_key is f"{session_id}_{hash(scores)}" - session_id is a
+        # UUID (hyphens only, no underscores), so a prefix match on
+        # "{session_id}_" can't collide with a different session_id.
+        if any(key.startswith(f"{sid}_") for sid in owned_session_ids):
+            CAREER_TREE_CACHE.pop(key, None)
+    for key in list(USER_TREE_CACHE.keys()):
+        if key.startswith(f"all:{user_id}:"):
+            USER_TREE_CACHE.pop(key, None)
+
 # ── Connect Threads (combined-scope results) ────────────────────
 # Both keyed by f"{user_id}:{get_user_content_fingerprint(user_id)}" -
 # the fingerprint changes the moment any of that user's real sessions
@@ -1164,6 +1198,9 @@ def save_reflection_note(req: ReflectionNoteRequest):
 
     log_event(req.session_id, "reflection_note_saved", {"note_id": note_id, "preference_count": len(created_preferences)})
 
+    if created_preferences:
+        invalidate_career_tree_cache_for_user(user_id)
+
     return {
         "status": "success",
         "note": {
@@ -1200,6 +1237,7 @@ def delete_reflection_preference_endpoint(pref_id: int, token: str):
         undo_pattern_adjustment(pref["extra"])
 
     delete_reflection_preference(pref_id)
+    invalidate_career_tree_cache_for_user(user_id)
     return {"status": "success", "id": pref_id}
 
 
@@ -1220,6 +1258,7 @@ def delete_reflection_note_endpoint(note_id: int, token: str):
             undo_pattern_adjustment(pref["extra"])
 
     delete_reflection_note(note_id)
+    invalidate_career_tree_cache_for_user(user_id)
     return {"status": "success", "id": note_id}
 
 # ── Telemetry & Analytics Endpoints ───────────────────────────
