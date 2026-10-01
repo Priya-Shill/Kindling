@@ -374,10 +374,16 @@ def get_latest_inference_scores(session_id: str) -> dict | None:
     """
     Retrieves the most recent computed or user-updated 6D scores for a session from SQLite events table.
     Checks 'profile_updated' first (if user edited scores), then 'score_computed'.
+    score_computed events written since the debounced Phase-2 rescoring
+    was added nest the real 6 scores under a "scores" key alongside
+    scored_at_message_count (see maybe_rescore_session in main.py);
+    .get("scores", data) falls back to treating the whole dict as the
+    scores for every event logged before that change, and for
+    profile_updated, which has always been flat.
     """
     conn = get_db()
     cursor = conn.execute("""
-        SELECT event_data FROM events 
+        SELECT event_data FROM events
         WHERE session_id = ? AND event_type IN ('score_computed', 'profile_updated')
         ORDER BY id DESC LIMIT 1
     """, (session_id,))
@@ -386,10 +392,49 @@ def get_latest_inference_scores(session_id: str) -> dict | None:
 
     if row and row["event_data"]:
         try:
+            data = json.loads(row["event_data"])
+            return data.get("scores", data)
+        except Exception:
+            return None
+    return None
+
+
+def get_latest_score_computed_event(session_id: str) -> dict | None:
+    """
+    The raw event_data of the most recent 'score_computed' event only
+    (never 'profile_updated') - used to decide whether debounced
+    auto-rescoring is safe to run at all. A later manual profile_updated
+    edit (the student's own trait decisions in Reflection) must never
+    be silently overwritten by an automatic rescore.
+    """
+    conn = get_db()
+    cursor = conn.execute("""
+        SELECT event_data FROM events
+        WHERE session_id = ? AND event_type = 'score_computed'
+        ORDER BY id DESC LIMIT 1
+    """, (session_id,))
+    row = cursor.fetchone()
+    conn.close()
+    if row and row["event_data"]:
+        try:
             return json.loads(row["event_data"])
         except Exception:
             return None
     return None
+
+
+def has_profile_updated_after_last_score(session_id: str) -> bool:
+    """True if the session's latest score/profile event is a manual
+    profile_updated edit rather than an auto score_computed one."""
+    conn = get_db()
+    cursor = conn.execute("""
+        SELECT event_type FROM events
+        WHERE session_id = ? AND event_type IN ('score_computed', 'profile_updated')
+        ORDER BY id DESC LIMIT 1
+    """, (session_id,))
+    row = cursor.fetchone()
+    conn.close()
+    return bool(row) and row["event_type"] == "profile_updated"
 
 
 def get_latest_trait_decisions_for_sessions(session_ids: list[str]) -> dict:

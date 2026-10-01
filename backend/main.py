@@ -5,6 +5,7 @@ Phase 2: Open Exploration & Mentorship (No Scoring Impact)
 """
 
 import os
+import re
 import sys
 import time
 import secrets
@@ -40,6 +41,8 @@ from db import (
     get_timeline_for_sessions,
     get_field_summary,
     get_latest_inference_scores,
+    get_latest_score_computed_event,
+    has_profile_updated_after_last_score,
     get_latest_trait_decisions_for_sessions,
     get_combined_messages_for_user,
     get_user_content_fingerprint,
@@ -206,13 +209,17 @@ TONE AND LANGUAGE
 - Match the student's energy: stay relaxed when they are relaxed and enthusiastic when they are excited.
 
 RESPONSE RULES
-- Answer the student's actual question directly first.
-- Keep the response short and bite-sized: normally no more than 3 short sentences or a few very short bullets.
+Structure every reply the same way, whether it's a doubt, a question, or a task:
+1. One plain sentence that directly answers the question - no wind-up.
+2. 2 to 4 short bullet points with the real, useful detail.
+3. One small real-world example that makes it concrete.
+4. One gentle follow-up question at the end, unless the reply genuinely does not call for one.
+- Use simple, everyday words a high-school student can follow.
+- Never use em dashes - use a period or comma instead.
 - Never write a wall of text, dense paragraph, syllabus, prerequisite list, or job-requirements page.
 - Do not dump tools, technologies, courses, or technical concepts unless they are relevant to the question.
 - If the question is broad or technical, give ONE honest, useful answer first instead of an exhaustive roadmap. Add deeper technical detail only when the student asks for it.
-- Use a small real-world example when it makes the idea easier to understand.
-- Use short bullet points only when they genuinely make the answer easier to scan.
+- Be encouraging but honest - never a hollow promise like "Absolutely, you can!" Say what it actually takes instead (regular practice, real training, patience, that everyone's path looks different). Honesty is the encouragement, not reassurance for its own sake.
 
 EXPLORATION
 - Help the student explore hobbies, skills, projects, fields, and possible directions without pushing them toward a specific career.
@@ -249,16 +256,27 @@ question, do not offer a task, and do not use a bulleted list here — just \
 two friendly sentences."""
 
 CLOSING_MESSAGE = (
-    "Thanks for sharing all of that! I've got a good sense of what draws you in. "
-    "Your initial career profile is complete! You can view your career matches now, "
-    "or feel free to keep chatting with me to explore any specific activities or questions further."
+    "Thanks for sharing all that. I've started noticing a few patterns. "
+    "You can see some directions connected to what you've shared, or keep talking with me."
 )
 
 INSUFFICIENT_CONTENT_MESSAGE = (
     "It looks like we didn't get to chat much yet. "
-    "To build your career profile, try sharing something you enjoyed doing recently, "
+    "Try sharing something you enjoyed doing recently, "
     "or a hobby you find interesting. Even one small detail helps!"
 )
+
+
+def strip_em_dashes(text: str) -> str:
+    """PHASE2_SYSTEM_PROMPT's own reply rules already tell the model
+    never to use an em dash, but that instruction isn't 100% reliable
+    on its own (confirmed in testing) - enforced here in code instead
+    of just trusted from the prompt, same reasoning as the
+    quote-or-fallback honesty check in ai_core/tree_naming.py."""
+    if not text:
+        return text
+    return re.sub(r"\s*[—–]\s*", ", ", text)
+
 
 app = FastAPI(title="Kindling Chat API")
 
@@ -309,9 +327,6 @@ class MessageResponse(BaseModel):
     # total_questions (same turn), so the frontend needs this separate
     # flag to tell a real completion apart from that bailout.
     intake_complete: bool = False
-    # Set only on an introRequest reply — two real tappable choice
-    # labels the frontend renders as starter-chip-style buttons.
-    choices: Optional[List[str]] = None
 
 class EventLogRequest(BaseModel):
     session_id: str
@@ -669,7 +684,10 @@ def chat_message(req: MessageRequest) -> MessageResponse:
             maybe_generate_title(req.session_id)
 
             scores = score_session(phase1_transcript)
-            log_event(req.session_id, "score_computed", scores)
+            log_event(req.session_id, "score_computed", {
+                "scores": scores,
+                "scored_at_message_count": count_user_messages(req.session_id),
+            })
             print(f"[session {req.session_id}] Phase 1 scoring completed & saved: {scores}")
 
             return MessageResponse(
@@ -718,6 +736,7 @@ def chat_message(req: MessageRequest) -> MessageResponse:
         try:
             # Use Phase 2 conversational prompt
             reply = call_llm(messages=history, system_prompt=system_prompt)
+            reply = strip_em_dashes(reply)
         except Exception as e:
             print(f"\n[PHASE 2 LLM ERROR]: {e}\n")
             reply = "I'm here to help you explore! What else would you like to talk about?"
@@ -728,14 +747,11 @@ def chat_message(req: MessageRequest) -> MessageResponse:
             "reply_length": len(reply)
         })
 
-        choices = ["Try a small task", "Ask a doubt"] if req.introRequest else None
-
         # Phase 2 messages DO NOT trigger score_session()!
         return MessageResponse(
             reply=reply,
             question_index=question_index,
             total_questions=TOTAL_PHASE1_QUESTIONS,
-            choices=choices,
         )
 
 
@@ -756,6 +772,42 @@ def get_session_history(session_id: str, token: str):
 
 # ── Inference API ─────────────────────────────────────────────
 
+# Until now, Inference was scored exactly once, at Phase 1 turn 7, and
+# never again - confirmed by reading the code (see the Phase 2 branch's
+# own "Phase 2 messages DO NOT trigger score_session()!" comment).
+# Continuing to chat (a doubt, a task) never moved the radar at all.
+# This re-scores using the student's FULL current transcript once
+# enough new messages have piled up since the last score, so the radar
+# keeps reflecting the conversation - but debounced (not every single
+# message, to protect real LLM quota) and never when the student has
+# since manually corrected their profile via Reflection's trait
+# decisions, since an automatic rescore must not silently overwrite an
+# explicit user correction.
+RESCORE_MIN_NEW_USER_MESSAGES = 2
+
+
+def maybe_rescore_session(session_id: str) -> None:
+    if has_profile_updated_after_last_score(session_id):
+        return
+
+    last_score = get_latest_score_computed_event(session_id)
+    if last_score is None:
+        return  # No Phase 1 score yet at all - nothing to debounce against.
+    scored_at = last_score.get("scored_at_message_count", 0)
+
+    current_count = count_user_messages(session_id)
+    if current_count - scored_at < RESCORE_MIN_NEW_USER_MESSAGES:
+        return
+
+    transcript = get_messages(session_id)
+    scores = score_session(transcript)
+    log_event(session_id, "score_computed", {
+        "scores": scores,
+        "scored_at_message_count": current_count,
+    })
+    print(f"[session {session_id}] Debounced rescore after {current_count - scored_at} new messages: {scores}")
+
+
 @app.get("/api/chat/inference/{session_id}")
 def get_inference_scores(session_id: str, token: str, scope: str = "single"):
     if not session_exists(session_id):
@@ -765,6 +817,7 @@ def get_inference_scores(session_id: str, token: str, scope: str = "single"):
     if scope == "all":
         scores = get_combined_inference_scores(user_id)
     else:
+        maybe_rescore_session(session_id)
         scores = get_latest_inference_scores(session_id)
 
     if scores is None:

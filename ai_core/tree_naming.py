@@ -143,6 +143,7 @@ Respond with ONLY a JSON object, no other text, no markdown, in exactly one of t
 not paraphrased, not translated, not summarized. If you cannot copy an exact phrase this way, you do not have \
 a real connection - use shape 2 instead.
 - Connect that exact quoted phrase to the occupation's real work.
+- Always speak directly to the student as "you" - never in the third person ("the student said...", "they mentioned..."). The quoted phrase is still copied exactly as they said it; only the sentence wrapped around it speaks to them directly.
 - Never use the words "match", "fit", "score", "percent", or any percentage.
 - Never say "you are X" or "you'd be great at Y".
 

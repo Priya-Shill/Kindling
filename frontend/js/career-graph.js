@@ -493,9 +493,20 @@
 
         const wasOpenedBefore = opened.has(id) && selected !== id;
 
-        const qs = node.type === 'career'
-            ? [`What does a day as a ${lc(node.label)} look like?`, `How do people get into ${lc(node.label)} work?`]
-            : [`What questions does ${lc(node.label)} try to answer?`, `How is ${lc(node.label)} connected to what I've explored?`];
+        // Most career/field labels are real plural O*NET-style titles
+        // ("Fine Artists", "Designers") - plugging those into a
+        // singular-only template read as "a day as a fine artists" and
+        // "does Designers try to answer". Heuristic only (last word
+        // ending in 's'), not true grammatical number, but it's right
+        // for the occupation-title style labels these actually are.
+        const plural = /[a-z]s$/i.test(node.label.trim().split(/\s+/).pop());
+        const article = plural ? '' : 'a ';
+
+        const qs = node.type === 'hub'
+            ? ["What patterns have you noticed in what I've shared?", "Which direction should I explore first?"]
+            : node.type === 'career'
+            ? [`What does a day as ${article}${lc(node.label)} look like?`, `How do people get into work as ${article}${lc(node.label)}?`]
+            : [`What questions ${plural ? 'do' : 'does'} ${lc(node.label)} try to answer?`, `How ${plural ? 'are' : 'is'} ${lc(node.label)} connected to what I've explored?`];
 
         const parentNode = node.parent ? byId[node.parent] : null;
         const why = node.why || (parentNode ? `Branches from ${parentNode.label}.${parentNode.why ? ' ' + parentNode.why : ''}` : '');
@@ -579,6 +590,7 @@
 
         Object.entries(nodeEls).forEach(([k, g]) => g.classList.toggle('is-selected', k === id));
         light(id);
+        $('#showAllBtn').hidden = !id;
 
         if (id) {
             renderNode(id);
@@ -670,6 +682,7 @@
     $('#zoomOut').addEventListener('click', () => zoomAt(0.8));
     const fitK = () => (frame.clientWidth && frame.clientWidth < 600 ? 1.3 : 1);
     $('#zoomFit').addEventListener('click', () => { view = { x: 0, y: 0, k: fitK() }; applyView(); });
+    $('#showAllBtn').addEventListener('click', () => selectNode(null));
 
     // ── Fullscreen ───────────────────────────────────────────
     // Fullscreens #graphLayout (not just the tree) so the starfield
@@ -688,7 +701,21 @@
         onChange: () => setFsPanelOpen(false)
     });
 
-    $('#graphPanelClose')?.addEventListener('click', () => setFsPanelOpen(false));
+    // Fully deselects (clears the dim/focus state on the graph, not
+    // just the panel) - closing the panel used to leave whatever node
+    // was selected still dimming everything else, with no way back to
+    // full brightness short of Esc or the "Back to the whole map" link.
+    $('#graphPanelClose')?.addEventListener('click', () => selectNode(null));
+
+    // Defensive only: panel and #graphFrame are siblings, not nested,
+    // so the graph's own wheel-zoom listener below can never actually
+    // fire from a wheel event over the panel - the real reason the
+    // panel couldn't scroll was its fullscreen CSS using a flat
+    // `overflow: hidden` (needed to clip it during the width-open
+    // transition) instead of allowing vertical scroll once open. Fixed
+    // in screens.css; this stays as a guard against that assumption
+    // ever becoming false if the layout changes later.
+    panel.addEventListener('wheel', e => e.stopPropagation());
 
     // The panel now pushes the graph area rather than overlaying it
     // (see .map-layout.is-fullscreen .info-pane in screens.css) - once
@@ -703,13 +730,16 @@
         applyView();
     });
 
-    // Fullscreen only: clicking empty graph space (not a node or the
-    // toolbar/filter) dismisses the slide-over panel without touching
-    // the underlying selection.
+    // Clicking empty graph space (not a node or the toolbar/filter)
+    // fully deselects - in fullscreen this also closes the slide-over
+    // panel as a side effect of selectNode(null), same as the panel's
+    // own close button and "Back to the whole map" link. Works outside
+    // fullscreen too, where there was previously no way to click back
+    // to full brightness at all short of Esc.
     frame.addEventListener('click', e => {
-        if (!fsPanelOpen || !graphLayout.classList.contains('is-fullscreen')) return;
+        if (!selected) return;
         if (e.target.closest('.graph-tools, .graph-filter, .node')) return;
-        setFsPanelOpen(false);
+        selectNode(null);
     });
 
     let drag = null, dragMoved = false;

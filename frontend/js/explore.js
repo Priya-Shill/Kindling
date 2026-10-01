@@ -11,7 +11,7 @@
 (() => {
 
     const K = window.Kindling;
-    const { $, $$, esc } = K;
+    const { $, $$, esc, lc } = K;
 
     const feed = $('#feed'), form = $('#composer'), input = $('#ask'), sendBtn = $('.send', form);
     const threadProgress = $('#threadProgress'), threadProgressFill = $('#threadProgressFill'), threadProgressLabel = $('#threadProgressLabel');
@@ -24,6 +24,10 @@
     const deleteThreadDialog = $('#deleteThreadDialog'), deleteThreadConfirmBtn = $('#deleteThreadConfirm');
     const undoToast = $('#undoToast'), undoToastText = $('#undoToastText'), undoToastBtn = $('#undoToastBtn');
     const MAX_PINS = 5;
+
+    const contextBar = $('#contextBar'), contextBarTitle = $('#contextBarTitle');
+    const contextBarTask = $('#contextBarTask'), contextBarDoubt = $('#contextBarDoubt'), contextBarClose = $('#contextBarClose');
+    const doubtChips = $('#doubtChips');
 
     const starters = [
         'Why do people make certain choices?',
@@ -78,9 +82,9 @@
         const wrap = document.createElement('div');
         wrap.className = 'intake-complete-card';
         wrap.innerHTML = `
-            <p class="intake-complete-title">Your career profile is ready</p>
-            <p class="intake-complete-sub">See how what you shared connects to real careers, or keep chatting below to explore further.</p>
-            <a href="#graph" class="btn-gold intake-complete-cta">See your career matches <svg width="14" height="14"><use href="#arrow"/></svg></a>
+            <p class="intake-complete-title">I've started noticing a few patterns</p>
+            <p class="intake-complete-sub">You can see some directions connected to what you've shared, or keep chatting below to explore further.</p>
+            <a href="#graph" class="btn-gold intake-complete-cta">See your directions <svg width="14" height="14"><use href="#arrow"/></svg></a>
         `;
         feed.appendChild(wrap);
         scrollFeed();
@@ -134,17 +138,6 @@
     }
 
     /*
-     * Unlike wireChipClicks (prefill only), these send immediately —
-     * for the two real Career Graph intro-flow buttons ("Try a small
-     * task" / "Ask a doubt") returned by the backend as
-     * MessageResponse.choices. Clicking one sends that exact label as
-     * the next real message.
-     */
-    function wireChoiceClicks(container) {
-        $$('.chip', container).forEach(c => c.addEventListener('click', () => sendMessage(c.textContent)));
-    }
-
-    /*
      * `chips` can be: true (the 4 generic starters), an array of
      * specific prompt strings (e.g. one real, occupation-grounded
      * prompt), or omitted/false for none.
@@ -188,28 +181,97 @@
         }
     }
 
-    function addActionRow(container, actions) {
-        const row = document.createElement('div');
-        row.className = 'starters';
-        row.innerHTML = actions.map(a => `<button type="button" class="chip">${esc(a.label)}</button>`).join('');
-
-        [...row.querySelectorAll('.chip')].forEach((btn, i) => {
-            btn.addEventListener('click', () => {
-                if (actions[i].value) {
-                    input.value = actions[i].value;
-                    sendBtn.disabled = false;
-                }
-                input.focus();
-            });
-        });
-
-        container.appendChild(row);
+    // Real plural O*NET-style titles ("Musicians and Singers") need
+    // "work as X" / no article; a rarer singular label needs "a" - same
+    // heuristic career-graph.js uses for its own question templates.
+    function isPluralLabel(label) {
+        return /[a-z]s$/i.test(String(label).trim().split(/\s+/).pop());
     }
+
+    function buildTryPrompt(context) {
+        const realTask = Array.isArray(context.tasks) && context.tasks.length ? context.tasks[0] : null;
+        return realTask
+            ? `Can you give me something small and doable I could try, connected to this: "${realTask}"?`
+            : `Can you give me something small and doable I could try, related to ${context.title}?`;
+    }
+
+    function buildDoubtChips(context) {
+        const article = isPluralLabel(context.title) ? '' : 'a ';
+        return [
+            `Do I need formal training to work as ${article}${lc(context.title)}?`,
+            `How do people in this field actually earn a living?`,
+            `Is it too late for me to start exploring this?`
+        ];
+    }
+
+    // The persistent bar for a conversation that started from a real
+    // Career Graph node - replaces the old one-time "Try a small task"
+    // / "Ask a doubt" chips that only ever appeared once, right after
+    // the intro message, with something available for the rest of the
+    // conversation (a student who tries a task may still want to ask
+    // a doubt afterward, and the reverse).
+    function showContextBar(context) {
+        if (!context?.title) return;
+        contextBarTitle.textContent = context.title;
+        contextBar.hidden = false;
+    }
+
+    function hideContextBar() {
+        contextBar.hidden = true;
+        hideDoubtChips();
+    }
+
+    function hideDoubtChips() {
+        doubtChips.hidden = true;
+        doubtChips.innerHTML = '';
+        input.placeholder = 'Tell me what you\'ve been curious about or tinkering with lately…';
+    }
+
+    contextBarTask.addEventListener('click', () => {
+        if (!activeContext) return;
+        hideDoubtChips();
+        sendMessage(buildTryPrompt(activeContext));
+    });
+
+    // Never auto-sends anything - focuses the composer with a real
+    // placeholder and three real suggested doubts as chips, so the
+    // student asks Kindling something instead of Kindling asking them
+    // (clicking this used to literally send the text "Ask a doubt" as
+    // a user message, which Kindling then had nothing real to answer
+    // and so asked its own question back - backwards from what this
+    // button is for).
+    contextBarDoubt.addEventListener('click', () => {
+        if (!activeContext) return;
+        input.placeholder = `Ask anything about ${activeContext.title}…`;
+        doubtChips.innerHTML = buildDoubtChips(activeContext)
+            .map(q => `<button type="button" class="chip">${esc(q)}</button>`).join('');
+        doubtChips.hidden = false;
+        // These are single-use suggestions, not prefill starters -
+        // clicking one sends it immediately (same real question a
+        // typed doubt would) and the suggestion row goes away either
+        // way, same as it does once the student types their own.
+        $$('.chip', doubtChips).forEach(c => c.addEventListener('click', () => {
+            hideDoubtChips();
+            sendMessage(c.textContent);
+        }));
+        input.focus();
+    });
+
+    // Typing a real doubt instead of clicking a suggestion should
+    // retire the suggestions too, the moment the student actually
+    // sends it - handled where the composer's submit already runs.
+    form.addEventListener('submit', () => { if (!doubtChips.hidden) hideDoubtChips(); });
+
+    contextBarClose.addEventListener('click', () => {
+        activeContext = null;
+        hideContextBar();
+    });
 
     async function showOccupationContext(context) {
         if (!context?.title) return;
 
-        const body = addKindling(`Continuing from: ${context.title}`, false);
+        showContextBar(context);
+        addKindling(`Continuing from: ${context.title}`, false);
 
         /*
          * The Career Graph panel's own buttons (a specific "Questions
@@ -225,21 +287,7 @@
          */
         if (context.prefillMessage) {
             await sendMessage(context.prefillMessage, { introRequest: !!context.isIntroFlow });
-            return;
         }
-
-        const realTask = Array.isArray(context.tasks) && context.tasks.length
-            ? context.tasks[0]
-            : null;
-
-        const tryPrompt = realTask
-            ? `Can you give me something small and doable I could try, connected to this: "${realTask}"?`
-            : `Can you give me something small and doable I could try, related to ${context.title}?`;
-
-        addActionRow(body, [
-            { label: 'Give me something to try', value: tryPrompt },
-            { label: 'I have a question', value: null }
-        ]);
     }
 
     function renderTranscript(transcript) {
@@ -549,6 +597,7 @@
             setLoading(true);
             K.setSessionId(sessionId);
             activeContext = null;
+            hideContextBar();
 
             const restored = await restoreSession(sessionId);
 
@@ -738,14 +787,6 @@
 
             pending.innerHTML = data.reply ? K.renderMarkdown(data.reply) : '';
 
-            if (Array.isArray(data.choices) && data.choices.length) {
-                const chipsEl = document.createElement('div');
-                chipsEl.className = 'starters';
-                chipsEl.innerHTML = data.choices.map(s => `<button type="button" class="chip">${esc(s)}</button>`).join('');
-                wireChoiceClicks(chipsEl);
-                pending.appendChild(chipsEl);
-            }
-
             if (typeof data.question_index === 'number') questionIndex = data.question_index;
             if (typeof data.total_questions === 'number') totalQuestions = data.total_questions;
 
@@ -801,6 +842,7 @@
     $('#newThread').addEventListener('click', async () => {
         K.clearSession();
         activeContext = null;
+        hideContextBar();
         await startConversation();
         await loadThreads();
         closeDrawer();
