@@ -116,11 +116,19 @@ class TestReflectionHideInvalidatesCareerTreeCache(unittest.TestCase):
         conn.close()
 
     def _patched_ai_calls(self):
+        # The generated-string cache is swapped for an in-memory one
+        # too: short titles and "try it" text are cached by occupation
+        # and task alone, shared by every user, so writing these mocks
+        # to the real table left "Try a small version of this task
+        # yourself." showing on real careers in the local app.
+        fake_cache = {}
         return patch.multiple(
             tree_enrichment,
             generate_career_short_title=_mock_short_title,
             generate_why_connected=_mock_why_connected,
             generate_try_it=_mock_try_it,
+            get_cached_string=fake_cache.get,
+            set_cached_string=lambda key, kind, value: fake_cache.__setitem__(key, value),
         )
 
     def _career_labels(self):
