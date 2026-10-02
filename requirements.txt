@@ -11,4 +11,4 @@ faiss-cpu>=1.7.4
 shap>=0.42.0
 bcrypt>=4.1.0
 google-auth>=2.28.0
-tokenizers>=0.15.0
+tokenizers>=0.19.1
