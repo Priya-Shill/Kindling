@@ -56,6 +56,8 @@ AXIS_DESCRIPTIONS = {
     "leads_persuades": "Some activities suggest curiosity about influencing ideas, decisions, or direction.",
 }
 
+TOPIC_MATCH_WHY = "This is closely related to what you've been talking about."
+
 LETTER_TO_AXIS = {"R": "builds_tinkers", "I": "investigates_why", "A": "creates_expresses",
                    "S": "works_with_people", "C": "organizes_systems", "E": "leads_persuades"}
 
@@ -85,12 +87,18 @@ def _prune_irrelevant_careers(tree: dict) -> dict:
     broad RIASEC-style pattern (node["relevant"] is False), regardless
     of how well they scored on RIASEC/FAISS similarity - a real
     student quote is now required, not just a personality-pattern
-    overlap. A field or area that loses every one of its children this
+    overlap. The exception is a strong topic match (node["topicMatch"],
+    set by career_tree.py from the student's own words without any AI
+    call): it stays even when the "why" call fails or returns no
+    quote. A field or area that loses every one of its children this
     way is a dead end and gets dropped too, same "don't show an empty
     branch" rule career_tree.py already applies to patterns with zero
     real candidates in the first place.
     """
-    keep_ids = {n["id"] for n in tree["nodes"] if n["type"] != "career" or n.get("relevant", True)}
+    keep_ids = {
+        n["id"] for n in tree["nodes"]
+        if n["type"] != "career" or n.get("relevant", True) or n.get("topicMatch")
+    }
     nodes = [n for n in tree["nodes"] if n["id"] in keep_ids]
     edges = [e for e in tree["edges"] if e["source"] in keep_ids and e["target"] in keep_ids]
 
@@ -112,7 +120,12 @@ def _prune_irrelevant_careers(tree: dict) -> dict:
         return {"nodes": [{"id": "you", "type": "hub", "label": "You"}], "edges": []}
 
     for n in nodes:
+        if n.get("topicMatch") and n.get("relevant") is False:
+            # The quote-or-fallback sentence says "you haven't talked
+            # about this kind of work yet", which isn't true here.
+            n["why"] = TOPIC_MATCH_WHY
         n.pop("relevant", None)
+        n.pop("topicMatch", None)
 
     return {"nodes": nodes, "edges": edges}
 

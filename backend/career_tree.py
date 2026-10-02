@@ -19,9 +19,10 @@ ROOT_DIR = BACKEND_DIR.parent
 sys.path.append(str(BACKEND_DIR))
 sys.path.append(str(ROOT_DIR / "Scripts"))
 
-from db import get_latest_inference_scores, get_latest_trait_decisions, get_session_user_id, get_active_reflection_preferences
+from db import get_latest_inference_scores, get_latest_trait_decisions, get_session_user_id, get_active_reflection_preferences, get_messages
 from soc_titles import major_group, minor_group, broad_group, major_title, minor_title, field_display_label
 from matching import match_occupations, load_career_graph, RIASEC_COLUMNS
+from topic_relevance import topic_relevance
 
 INTEREST_TYPES_PATH = str(ROOT_DIR / "Data" / "career_interest_types.csv")
 
@@ -60,6 +61,14 @@ MAX_PER_FIELD = 5
 MAX_PATTERN_SHARE = 0.5
 MAX_CROSSLINKS_PER_NODE = 2
 MAX_CROSSLINKS_TOTAL = 12
+
+# Hybrid ranking: RIASEC fit and topic relevance are both expressed as
+# z-scores over the whole dataset, so a weight of 1 lets an occupation
+# that is clearly about what the student said (topic ~ +3) outrank one
+# that only shares their RIASEC shape (fit ~ +1.5 for a very good
+# match), while RIASEC still orders everything the student's words say
+# nothing about.
+TOPIC_WEIGHT = 1.0
 
 
 def load_interest_high_points() -> dict:
@@ -225,13 +234,126 @@ def field_labels(fields: dict) -> dict:
     return labels
 
 
-def select_occupations(scores: dict, shown_patterns: list, high_points: dict,
-                        hidden_ids: frozenset = frozenset(), hidden_field_codes: frozenset = frozenset()):
+def rank_patterns(all_occs_by_id: dict, scores: dict, shown_patterns: list, high_points: dict,
+                   evidence_text="") -> tuple:
     """
-    Ranks the real candidate pool once (existing FAISS matching
-    logic, similarity kept internal/never returned to the UI), buckets
-    each real candidate under its Level-3-assigned pattern, then
-    greedily fills each pattern honoring: >=MIN_PER_PATTERN where real
+    Ranks the real candidate pool once and buckets every real
+    candidate under its Level-3-assigned pattern, best first - the
+    shared input both select_occupations (the default first view) and
+    more_occupations ("Show more") build on, so "more" always
+    continues the exact same order the first view was drawn from
+    rather than deriving a different one.
+
+    The order is a hybrid of two things, neither ever returned to the
+    UI: RIASEC fit (FAISS cosine similarity to the student's scores)
+    and topic relevance to the student's own words (backend/
+    topic_relevance.py - local embeddings plus a BM25 lexical boost).
+    RIASEC alone ranked obvious matches ("Dancers" for a dancing-only
+    student) just outside a small per-pattern quota on vector-geometry
+    noise. With no usable evidence the order is RIASEC fit alone.
+
+    Returns (buckets, guaranteed_ids). guaranteed_ids are the few
+    strong topic matches that must reach the first view; each sits at
+    the front of its bucket.
+
+    Rank the ENTIRE real dataset, not an arbitrary top-N slice: a
+    secondary shown pattern's honest matches often rank lower in
+    *overall* 6D similarity (that's dominated by the student's
+    strongest axes) even though they're a perfectly real match for
+    that specific pattern's own IH high-point. Truncating the pool
+    early was silently starving weaker-but-shown patterns of real
+    candidates that do exist further down the ranking — confirmed
+    by testing (see career-tree test run notes).
+    """
+    student_vector = [scores.get(col, 0.0) for col in RIASEC_COLUMNS]
+    pool_size = len(all_occs_by_id)
+    ranked = match_occupations(
+        student_vector, threshold=0.0,
+        max_results=pool_size, min_results=pool_size,
+    )
+
+    topic, strong_ids = topic_relevance(evidence_text)
+    guaranteed_ids = {occ_id for occ_id in strong_ids if occ_id in all_occs_by_id}
+
+    similarities = [m["similarity"] for m in ranked]
+    mean = sum(similarities) / len(similarities) if similarities else 0.0
+    spread = math.sqrt(sum((s - mean) ** 2 for s in similarities) / len(similarities)) if similarities else 0.0
+
+    hybrid = {}
+    buckets = {p: [] for p in shown_patterns}
+    for m in ranked:
+        occ = all_occs_by_id.get(m["id"])
+        if not occ:
+            continue
+        pattern = assign_pattern(m["id"], shown_patterns, high_points)
+        if pattern is None and m["id"] in guaranteed_ids:
+            # None of this occupation's top-three interests is a shown
+            # pattern, but the student is plainly talking about this
+            # work - place it under whichever shown pattern the
+            # occupation's own real RIASEC profile is strongest on.
+            pattern = max(shown_patterns, key=lambda p: occ["riasec"][p])
+        if pattern in buckets:
+            fit = (m["similarity"] - mean) / spread if spread else 0.0
+            hybrid[m["id"]] = fit + TOPIC_WEIGHT * topic.get(m["id"], 0.0)
+            buckets[pattern].append(occ)
+
+    for pattern in buckets:
+        buckets[pattern].sort(key=lambda occ: (occ["id"] not in guaranteed_ids, -hybrid[occ["id"]]))
+
+    return buckets, guaranteed_ids
+
+
+SHOW_MORE_BATCH = 10
+
+
+def more_occupations(scores: dict, shown_patterns: list, high_points: dict,
+                      hidden_ids: frozenset, hidden_field_codes: frozenset, evidence_text,
+                      pattern: str, already_selected_ids: set, field_code: str = None,
+                      batch_size: int = SHOW_MORE_BATCH) -> tuple:
+    """
+    The next real, unselected candidates for a "Show more" click on a
+    field or pattern/area node - continues the exact same ranking
+    (RIASEC fit + dataset-wide topic relevance) the first view was
+    drawn from, rather than a separate relevance pass, so "more" never
+    contradicts what's already shown. field_code narrows to one field
+    within the pattern; None means the whole pattern/area, which can
+    surface fields not present in the default view at all.
+
+    Deliberately goes past MAX_PER_FIELD once a student explicitly
+    asks for more - that cap exists to keep the unsolicited first view
+    balanced, not to cap how many real matches exist for a field.
+    Returns (next_batch, remaining_count_after_this_batch).
+    """
+    all_occs_by_id = {
+        occ["id"]: occ for occ in load_career_graph()
+        if occ["id"] not in hidden_ids
+        and minor_group(occ["id"]) not in hidden_field_codes
+        and major_group(occ["id"]) not in hidden_field_codes
+        and broad_group(occ["id"]) not in hidden_field_codes
+    }
+    buckets, _ = rank_patterns(all_occs_by_id, scores, shown_patterns, high_points, evidence_text)
+    bucket = buckets.get(pattern, [])
+
+    if field_code:
+        def in_field(occ_id):
+            return (minor_group(occ_id) == field_code
+                    or major_group(occ_id) == field_code
+                    or broad_group(occ_id) == field_code)
+        bucket = [occ for occ in bucket if in_field(occ["id"])]
+
+    remaining = [occ for occ in bucket if occ["id"] not in already_selected_ids]
+    batch = remaining[:batch_size]
+    return batch, len(remaining) - len(batch)
+
+
+def select_occupations(scores: dict, shown_patterns: list, high_points: dict,
+                        hidden_ids: frozenset = frozenset(), hidden_field_codes: frozenset = frozenset(),
+                        evidence_text=""):
+    """
+    Ranks the real candidate pool once (rank_patterns - hybrid of
+    RIASEC fit and topic relevance, kept internal/never returned to
+    the UI), buckets each real candidate under its Level-3-assigned
+    pattern, then greedily fills each pattern honoring: >=MIN_PER_PATTERN where real
     candidates allow it, no single field ever exceeding MAX_PER_FIELD
     (checked by actually re-running the Level-2 grouping on every
     trial addition), and no pattern exceeding MAX_PATTERN_SHARE of the
@@ -242,6 +364,14 @@ def select_occupations(scores: dict, shown_patterns: list, high_points: dict,
     preferences) - excluded from the candidate pool itself, so a
     hidden occupation/field can never be selected in the first place,
     same as if it didn't exist in the dataset.
+
+    evidence_text is the student's own real words (Phase 1 intake +
+    typed Phase 2 chat) - one string, or one per thread in Connect
+    Threads' combined mode. The few strong topic matches rank_patterns
+    reports are selected first, before any quota is applied, so an
+    occupation the student is plainly talking about always reaches the
+    first view; they still respect MAX_PER_FIELD and never create a
+    pattern that isn't already shown.
     """
     all_occs_by_id = {
         occ["id"]: occ for occ in load_career_graph()
@@ -251,28 +381,7 @@ def select_occupations(scores: dict, shown_patterns: list, high_points: dict,
         and broad_group(occ["id"]) not in hidden_field_codes
     }
 
-    # Rank the ENTIRE real dataset, not an arbitrary top-N slice: a
-    # secondary shown pattern's honest matches often rank lower in
-    # *overall* 6D similarity (that's dominated by the student's
-    # strongest axes) even though they're a perfectly real match for
-    # that specific pattern's own IH high-point. Truncating the pool
-    # early was silently starving weaker-but-shown patterns of real
-    # candidates that do exist further down the ranking — confirmed
-    # by testing (see career-tree test run notes).
-    student_vector = [scores.get(col, 0.0) for col in RIASEC_COLUMNS]
-    pool_size = len(all_occs_by_id)
-    ranked = match_occupations(
-        student_vector, threshold=0.0,
-        max_results=pool_size, min_results=pool_size,
-    )
-
-    buckets = {p: [] for p in shown_patterns}
-    for m in ranked:
-        pattern = assign_pattern(m["id"], shown_patterns, high_points)
-        if pattern in buckets:
-            occ = all_occs_by_id.get(m["id"])
-            if occ:
-                buckets[pattern].append(occ)
+    buckets, guaranteed_ids = rank_patterns(all_occs_by_id, scores, shown_patterns, high_points, evidence_text)
 
     selected_by_pattern = {p: [] for p in shown_patterns}
     cursor = {p: 0 for p in shown_patterns}
@@ -289,6 +398,11 @@ def select_occupations(scores: dict, shown_patterns: list, high_points: dict,
                 selected_by_pattern[pattern].append(candidate)
                 return True
         return False
+
+    for pattern in shown_patterns:
+        # Guaranteed matches sit at the front of their bucket.
+        while cursor[pattern] < len(buckets[pattern]) and buckets[pattern][cursor[pattern]]["id"] in guaranteed_ids:
+            try_add(pattern)
 
     for pattern in shown_patterns:
         while len(selected_by_pattern[pattern]) < MIN_PER_PATTERN:
@@ -528,11 +642,12 @@ def build_career_tree(session_id: str) -> dict:
 
     decisions = get_latest_trait_decisions(session_id)
     hidden_ids, hidden_field_codes, focus_targets = _load_reflection_shaping(session_id)
-    return build_career_tree_core(scores, decisions, hidden_ids, hidden_field_codes, focus_targets)
+    evidence_text = "\n".join(m["content"] for m in get_messages(session_id, evidence_only=True) if m["role"] == "user")
+    return build_career_tree_core(scores, decisions, hidden_ids, hidden_field_codes, focus_targets, evidence_text)
 
 
 def build_career_tree_core(scores: dict, decisions: dict, hidden_ids: frozenset,
-                            hidden_field_codes: frozenset, focus_targets: list) -> dict:
+                            hidden_field_codes: frozenset, focus_targets: list, evidence_text="") -> dict:
     """
     The actual tree-building logic build_career_tree wraps, taking its
     real inputs directly instead of a session_id to resolve them from
@@ -548,7 +663,7 @@ def build_career_tree_core(scores: dict, decisions: dict, hidden_ids: frozenset,
 
     high_points = load_interest_high_points()
     selected_by_pattern, all_selected = select_occupations(
-        scores, shown_patterns, high_points, hidden_ids, hidden_field_codes
+        scores, shown_patterns, high_points, hidden_ids, hidden_field_codes, evidence_text
     )
 
     for focus_field_code, go_deeper in focus_targets:
@@ -575,6 +690,9 @@ def build_career_tree_core(scores: dict, decisions: dict, hidden_ids: frozenset,
         for pattern, occs in selected_by_pattern.items()
         for occ in occs
     }
+
+    # Cached by topic_relevance, so this repeats no work.
+    topic_match_ids = set(topic_relevance(evidence_text)[1])
 
     nodes = [{"id": "you", "type": "hub", "label": "You"}]
     edges = []
@@ -618,6 +736,11 @@ def build_career_tree_core(scores: dict, decisions: dict, hidden_ids: frozenset,
                     "tasks": [t["text"] for t in sample_tasks],
                     "taskIds": [t["task_id"] for t in sample_tasks],
                 })
+                if occ["id"] in topic_match_ids:
+                    # A strong match to the student's own words -
+                    # tree_enrichment keeps these even if the AI
+                    # "why" call fails or finds no quote.
+                    nodes[-1]["topicMatch"] = True
                 edges.append({"source": field_id, "target": occ_node_id, "kind": "branch"})
 
     cross_links = compute_cross_links(all_selected, pattern_by_occ_id, high_points)

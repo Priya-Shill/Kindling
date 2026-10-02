@@ -983,10 +983,17 @@ def get_career_tree(session_id: str, token: str, scope: str = "single"):
         session_ids = [s["session_id"] for s in get_sessions_for_user(user_id)]
         decisions = get_latest_trait_decisions_for_sessions(session_ids)
         hidden_ids, hidden_field_codes, focus_targets = _load_reflection_shaping_for_user(user_id)
-        tree = build_career_tree_core(scores, decisions, hidden_ids, hidden_field_codes, focus_targets)
+        combined_messages = get_combined_messages_for_user(user_id, evidence_only=True)
+        # One evidence text per thread, so each thread's own topic
+        # keeps its clear matches (see topic_relevance.topic_relevance).
+        evidence_by_thread = [
+            "\n".join(m["content"] for m in get_messages(sid, evidence_only=True) if m["role"] == "user")
+            for sid in session_ids
+        ]
+        tree = build_career_tree_core(scores, decisions, hidden_ids, hidden_field_codes, focus_targets, evidence_by_thread)
 
         try:
-            tree = enrich_tree_with_ai(tree, get_combined_messages_for_user(user_id, evidence_only=True))
+            tree = enrich_tree_with_ai(tree, combined_messages)
         except Exception as e:
             print(f"[Career Tree Enrichment Fallback Triggered - combined]: {e}")
 
