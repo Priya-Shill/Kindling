@@ -555,6 +555,7 @@
 .node-kind { display: flex; align-items: center; gap: 8px; font-size: 11.5px; letter-spacing: 1.8px; text-transform: uppercase; color: var(--muted); margin: 18px 0 10px; }
 .node-kind i { width: 7px; height: 7px; border-radius: 50%; }
 .node-title { font-family: var(--font-display); font-weight: 400; font-size: 42px; line-height: 1.05; }
+.node-official-title { font-size: 12.5px; color: var(--faint); margin-top: 6px; font-style: italic; }
 .node-path { font-size: 12.5px; color: var(--faint); margin-top: 8px; }
 .node-path button { color: var(--muted); text-decoration: underline; text-underline-offset: 3px; text-decoration-color: var(--border-strong); }
 .node-path button:hover { color: var(--fg); }

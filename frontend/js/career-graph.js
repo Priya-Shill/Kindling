@@ -519,6 +519,7 @@
         <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true"><path d="M11 6H2M5.5 2.5 2 6l3.5 3.5" stroke="currentColor" stroke-width="1.3" fill="none"/></svg>Back to the whole map</button>
       <p class="node-kind"><i style="background:${color};box-shadow:0 0 8px ${color}"></i>${kindName[node.type] || ''}</p>
       <h2 class="node-title">${esc(node.label)}</h2>
+      ${node.type === 'field' && node.officialTitle && node.officialTitle !== node.label ? `<p class="node-official-title">Official category: ${esc(node.officialTitle)}</p>` : ''}
       ${crumbs.length ? `<p class="node-path">${crumbs.map(c => `<button data-go="${c.id}">${esc(c.label)}</button>`).join(' &rarr; ')} &rarr; ${esc(node.label)}</p>` : ''}
       ${node.description ? `<div class="panel-block"><p>${esc(node.description)}</p></div>` : ''}
       ${wasOpenedBefore ? `<p class="seen-note"><svg width="10" height="10" aria-hidden="true"><use href="#spark"/></svg>You've opened this before</p>` : ''}

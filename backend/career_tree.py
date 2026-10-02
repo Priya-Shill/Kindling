@@ -20,7 +20,7 @@ sys.path.append(str(BACKEND_DIR))
 sys.path.append(str(ROOT_DIR / "Scripts"))
 
 from db import get_latest_inference_scores, get_latest_trait_decisions, get_session_user_id, get_active_reflection_preferences
-from soc_titles import major_group, minor_group, broad_group, major_title, minor_title
+from soc_titles import major_group, minor_group, broad_group, major_title, minor_title, field_display_label
 from matching import match_occupations, load_career_graph, RIASEC_COLUMNS
 
 INTEREST_TYPES_PATH = str(ROOT_DIR / "Data" / "career_interest_types.csv")
@@ -194,6 +194,35 @@ def group_into_fields(occupations: list) -> dict:
             split_fields.setdefault(field_code, []).extend(leftover_singletons)
 
     return split_fields
+
+
+def field_labels(fields: dict) -> dict:
+    """
+    {field_code: display label} for one area's fields (the output of
+    group_into_fields). Sibling fields never share a label: a minor
+    group split by broad group would otherwise show the same name two
+    or three times ("Performing Arts" for dance, music and acting
+    alike). A broad field with no label of its own is named after the
+    occupations in it; the leftover minor-level field becomes "Other".
+    """
+    labels = {
+        code: field_display_label(code, [occ["id"] for occ in occs])
+        for code, occs in fields.items()
+    }
+    seen = defaultdict(int)
+    for label in labels.values():
+        seen[label] += 1
+
+    for code, occs in fields.items():
+        label = labels[code]
+        if seen[label] < 2:
+            continue
+        if len(code) == 6:
+            shortest = sorted((occ["title"] for occ in occs), key=len)[:2]
+            labels[code] = " & ".join(shortest)
+        elif not label.startswith("Other"):
+            labels[code] = f"Other {label}"
+    return labels
 
 
 def select_occupations(scores: dict, shown_patterns: list, high_points: dict,
@@ -560,6 +589,7 @@ def build_career_tree_core(scores: dict, decisions: dict, hidden_ids: frozenset,
         edges.append({"source": "you", "target": area_id, "kind": "branch"})
 
         fields = group_into_fields(selected_by_pattern[pattern])
+        labels = field_labels(fields)
         for field_code, occs in fields.items():
             # Scoped by pattern letter: the same real SOC group can
             # legitimately hold occupations under two different
@@ -569,10 +599,10 @@ def build_career_tree_core(scores: dict, decisions: dict, hidden_ids: frozenset,
             # unscoped "f:15-2" id would collide and one field would
             # silently shadow the other in a node-id lookup.
             field_id = f"f:{letter}-{field_code}"
-            title = field_title(field_code)
+            official_title = field_title(field_code)
             nodes.append({
                 "id": field_id, "type": "field",
-                "label": title, "officialTitle": title,
+                "label": labels[field_code], "officialTitle": official_title,
                 "parent": area_id,
             })
             edges.append({"source": area_id, "target": field_id, "kind": "branch"})

@@ -33,7 +33,6 @@ sys.path.append(str(ROOT_DIR / "ai_core"))
 
 from db import get_cached_string, set_cached_string
 from tree_naming import (
-    generate_field_name,
     generate_career_short_title,
     generate_why_connected,
     generate_try_it,
@@ -140,11 +139,6 @@ def enrich_tree_with_ai(tree: dict, messages: list[dict]) -> dict:
 
     nodes_by_id = {n["id"]: n for n in tree["nodes"]}
 
-    careers_by_field = {}
-    for node in tree["nodes"]:
-        if node["type"] == "career":
-            careers_by_field.setdefault(node["parent"], []).append(node)
-
     jobs = []  # (cache_key, kind, generate_fn, apply_fn) — real cache misses only
 
     for node in tree["nodes"]:
@@ -153,18 +147,9 @@ def enrich_tree_with_ai(tree: dict, messages: list[dict]) -> dict:
             axis = LETTER_TO_AXIS.get(node["riasec"])
             node["why"] = AXIS_DESCRIPTIONS.get(axis, "")
 
-        elif node["type"] == "field":
-            member_titles = [c["fullTitle"] for c in careers_by_field.get(node["id"], [])]
-            cache_key = f"field_name:{node['id']}"
-            cached = get_cached_string(cache_key)
-            if cached is not None:
-                node["label"] = cached
-            else:
-                jobs.append((
-                    cache_key, "field_name",
-                    lambda official=node["officialTitle"], members=member_titles: generate_field_name(official, members),
-                    lambda value, n=node: n.__setitem__("label", value),
-                ))
+        # Field nodes' "label" is already the real, hand-written
+        # display name from soc_titles.field_display_label() (see
+        # career_tree.py) - no AI call needed or made for it.
 
         elif node["type"] == "career":
             soc = node["soc"]

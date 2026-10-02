@@ -11,11 +11,11 @@ pre-preference tree kept being served indefinitely, on every thread
 that user had, until the scores happened to change for some unrelated
 reason.
 
-Every real AI call (tree_enrichment.py's field-name/short-title/why/
-try-it generation, and the reflection note's own extraction call) is
-mocked, per instruction, so this runs fast and deterministically with
-no real LLM calls, no network, and no dependence on what a live model
-happens to say on a given run.
+Every real AI call (tree_enrichment.py's short-title/why/try-it
+generation, and the reflection note's own extraction call) is mocked,
+per instruction, so this runs fast and deterministically with no real
+LLM calls, no network, and no dependence on what a live model happens
+to say on a given run.
 """
 
 import os
@@ -41,10 +41,6 @@ from backend import main, db
 # Importing the bare names directly and patching those exact objects
 # (via patch.object, never a string target) keeps this unambiguous.
 import tree_enrichment
-
-
-def _mock_field_name(official_title, member_titles):
-    return official_title[:20]
 
 
 def _mock_short_title(full_title):
@@ -122,7 +118,6 @@ class TestReflectionHideInvalidatesCareerTreeCache(unittest.TestCase):
     def _patched_ai_calls(self):
         return patch.multiple(
             tree_enrichment,
-            generate_field_name=_mock_field_name,
             generate_career_short_title=_mock_short_title,
             generate_why_connected=_mock_why_connected,
             generate_try_it=_mock_try_it,
