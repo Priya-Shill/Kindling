@@ -41,8 +41,8 @@ Kindling's methodology is grounded in four core academic frameworks:
 
 ## How It Works
 
-1. **Explore (chat).** A 7-question intake conversation, then open-ended mentor chat. The LLM asks the questions; it never scores inside the chat.
-2. **Inference.** After the 7th answer the transcript is scored once into the 6 dimensions (`ai_core/inference_prompt.py`). Later, once at least 2 new typed messages exist, the next visit to Inference rescores the full transcript. Messages sent by a button (a Career Graph prompt, a doubt chip, "Try a small task") are stored but never counted as the student's own words.
+1. **Explore (chat).** A 7-question intake conversation, then open-ended mentor chat. If the answers are too short to score, the intake keeps going, one concrete question at a time, until there is enough. Open chat never starts on a thread with no real result, and the chat never produces a career list of its own: before a result exists it says so, and afterwards it points to the Career Graph.
+2. **Inference.** Once the intake has enough to go on (at the 7th answer at the earliest) the transcript is scored into the 6 dimensions (`ai_core/inference_prompt.py`). Later, once at least 2 new typed messages exist, the next visit to Inference rescores the full transcript. Messages sent by a button (a Career Graph prompt, a doubt chip, "Try a small task") are stored but never counted as the student's own words.
 3. **Career Graph.** A tree of *You → patterns → fields → careers*, built deterministically from the O*NET dataset and then given AI-written labels and explanations.
 4. **Reflection.** Time spent, pattern calibration ("This fits" / "Not quite"), and free-text "Your take" notes that can hide or focus parts of the graph.
 
@@ -118,10 +118,10 @@ The script saves after every batch and resumes if interrupted. `pip install mode
 Run from the repo root:
 
 ```
-python -m unittest Tests.test_topic_selection Tests.test_field_labels Tests.test_career_depth Tests.test_suggested_messages Tests.test_reflection_hide_cache Tests.test_matching Tests.test_shap_explainer
+python -m unittest Tests.test_topic_selection Tests.test_field_labels Tests.test_career_depth Tests.test_chat_honesty Tests.test_suggested_messages Tests.test_reflection_hide_cache Tests.test_matching Tests.test_shap_explainer
 ```
 
-These 44 tests make no LLM or network calls (AI calls are mocked). Importing the backend still needs the two API keys to be set, and the tests that use the API create and delete their own rows in the local `backend/kindling.db`.
+These 55 tests make no LLM or network calls (AI calls are mocked). Importing the backend still needs the two API keys to be set, and the tests that use the API create and delete their own rows in the local `backend/kindling.db`.
 
 `Tests/test_career_tree.py` is **not** part of this set. See Known Limitations.
 
@@ -136,7 +136,7 @@ These 44 tests make no LLM or network calls (AI calls are mocked). Importing the
 
 **Vendored embedding model.** `Outputs/embedding_model/` adds about 15 MB to the repository (token embeddings stored as float16, plus the tokenizer). In exchange the backend needs no model download at startup and no embedding API. The file is memory-mapped, and loading it adds roughly 8 MB.
 
-**Timing.** A deterministic tree build takes about 46 ms once the index is loaded (about 360 ms for the first build after startup). The first Career Graph load for a thread is much slower, because the AI enrichment makes about 3 LLM calls per career: 64 to 83 seconds in three measured runs. Results are cached afterwards.
+**Timing.** A deterministic tree build takes about 46 ms once the index is loaded (about 360 ms for the first build after startup). The first Career Graph load for a thread is noticeably slower, because the AI-written labels and explanations are generated then. Results are cached afterwards.
 
 ---
 

@@ -75,8 +75,9 @@ The LLM is never asked which careers to show. It scores the conversation, and it
 
 ## Conversation and Scoring Flow
 
-* **Phase 1 (messages 1 to 7):** a structured intake. Each reply is one short follow-up question. After the 7th answer the transcript is scored once and stored as a `score_computed` event. If the answers contain fewer than 12 meaningful words, nothing is scored.
-* **Phase 2 (message 8 onward):** open mentor chat. Sending a message does not score anything.
+* **Phase 1 (intake):** 7 structured questions. Each reply is one short follow-up question; the model is only ever asked for a question here. After the 7th answer the transcript is scored and stored as a `score_computed` event, provided the student's typed answers contain at least 5 distinct content words (stopwords and filler such as "idk" or "yes" don't count). If not, the reply says what kind of answer helps and the intake continues past 7, re-checking after every message, until there is enough.
+* **Phase 2 (open mentor chat):** begins only once a real score exists. Sending a message does not score anything. Replies have no fixed template. On every 6th typed message a one-line pointer to the Inference and Career Graph pages is appended in code.
+* **No invented results:** the chat never generates a career list as the student's result. Before a score exists, a question like "what career fits me?" gets a fixed honest answer and the next intake question. Once results exist, the mentor is told to point to the Career Graph, and may refer only to the real occupations on the student's graph when that graph has been built.
 * **Rescoring:** when the Inference page is requested and at least 2 new typed messages exist since the last score, the full transcript is scored again. It is skipped if the student has since corrected their profile ("Not quite", or a Reflection note), so an automatic rescore never overwrites an explicit correction.
 * **Evidence only:** messages sent by a button rather than typed (Career Graph panel prompts, doubt chips, "Try a small task") are flagged `suggested` in the `messages` table. They appear in the chat, but scoring, the rescore count, topic relevance, and the "why" quotes all read the transcript without them. They often contain O*NET task text, which was being scored as the student's own words.
 
@@ -181,7 +182,7 @@ If both providers fail, `call_llm` raises and each caller applies its own fallba
 * Measured locally on Windows in a fresh process: about 204 MB after startup, about 236 MB peak across repeated tree builds. **Not yet measured on Render's Linux environment.**
 * `shap` is imported only inside the explain endpoint; importing it at startup cost about 65 MB.
 * The vendored embedding model adds about 15 MB to the repository and removes any runtime model download.
-* A deterministic tree build takes about 46 ms once the index is loaded. AI enrichment of a new tree took 64 to 83 seconds in three measured runs and is cached afterwards.
+* A deterministic tree build takes about 46 ms once the index is loaded. AI enrichment of a new tree is noticeably slower and is cached afterwards.
 
 ---
 

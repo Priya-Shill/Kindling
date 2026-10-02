@@ -27,7 +27,7 @@ Only what the student typed is scored.
 
 ### When scoring runs
 
-1. Once, after the 7th intake answer.
+1. Once, when the intake has enough to score: at the 7th answer if the typed answers hold at least 5 distinct content words, otherwise at the first later message where they do. A question about results ("is there a career for me yet?") is not counted as evidence.
 2. Again when the Inference page is requested and at least 2 new typed messages exist since the last score, using the full transcript.
 3. Never automatically after the student has corrected their profile ("Not quite", or a Reflection note): the correction is kept.
 

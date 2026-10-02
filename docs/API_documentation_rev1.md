@@ -14,7 +14,7 @@ This document describes the API as implemented in `backend/main.py`. The Swagger
 * `POST /api/auth/signup` and `POST /api/auth/login` return `{token, email, name}`. `POST /api/auth/google` does the same for a Google ID token and returns 501 unless `GOOGLE_CLIENT_ID` is set on the server.
 * The token is the account's id. It has no expiry or refresh.
 * Every session-scoped endpoint takes the token (`token` in the JSON body for POST, `?token=` for GET and DELETE) and checks that it owns the session: 401 for a missing or unknown token, 403 for someone else's session, 404 for an unknown session.
-* Login is rate limited to 5 failed attempts per 15 minutes, per IP and per email, in memory.
+* Failed login attempts are rate limited.
 
 ---
 
@@ -56,7 +56,7 @@ This document describes the API as implemented in `backend/main.py`. The Swagger
 | :--- | :--- | :--- |
 | POST | `/api/chat/start` | Start a thread; returns `session_id` and the opening question |
 | POST | `/api/chat/message` | Send a message; returns the reply |
-| GET | `/api/chat/session/{session_id}` | Full transcript |
+| GET | `/api/chat/session/{session_id}` | Full transcript, plus `intake_complete` |
 | POST | `/api/chat/session/{session_id}/pin` | Pin or unpin (at most 5 pinned) |
 | DELETE | `/api/chat/session/{session_id}` | Delete a thread |
 
@@ -84,7 +84,9 @@ Response (200 OK):
 }
 ```
 
-Messages 1 to 7 are the intake. The 7th triggers scoring and returns `intake_complete: true`, unless the answers were too short to score. From the 8th message on, replies are open mentor chat.
+The intake is 7 questions. The 7th answer triggers scoring and returns `intake_complete: true`. If the answers so far are too short to score, the reply explains what helps and the intake simply continues, one question at a time, until there is enough; `question_index` stays at 7 meanwhile. Open mentor chat only begins once a real score exists.
+
+If the student asks which career fits them before a score exists, the reply is a fixed, honest "not yet" followed by the next intake question. No career list is generated.
 
 ### Inference (scores)
 
@@ -179,7 +181,6 @@ Saving or removing a preference clears that account's cached trees, so the next 
 | :--- | :--- | :--- |
 | POST | `/api/events/log` | Log a client event (for example `node_time`) |
 | GET | `/api/dashboard/timeline/{session_id}` | A thread's events; `?scope=all` for all threads |
-| GET | `/api/dashboard/metrics` | Aggregate usage metrics |
 | GET | `/api/dashboard/field-summary` | Event counts by type |
 
 ---
