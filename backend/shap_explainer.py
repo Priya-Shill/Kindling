@@ -1,6 +1,5 @@
 import json
 import numpy as np
-import shap
 from pathlib import Path
 from sklearn.metrics.pairwise import cosine_similarity
 
@@ -53,6 +52,12 @@ def explain_match(student_vector, occupation_id):
     Calculate SHAP contribution scores for the six RIASEC
     dimensions for a specific occupation match.
     """
+
+    # Imported here, not at module load: shap (with numba) costs about
+    # 65 MB the moment it's imported, and this endpoint is the only
+    # thing that uses it - the 512 MB host shouldn't pay that at
+    # startup for every request that never asks for an explanation.
+    import shap
 
     career_graph = load_career_graph()
 
