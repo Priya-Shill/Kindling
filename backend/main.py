@@ -82,6 +82,7 @@ from career_tree import (
 )
 from tree_enrichment import enrich_tree_with_ai, apply_cached_strings
 from career_depth import generate_career_depth
+from topic_relevance import _STOPWORDS as STOPWORDS
 from reflection_extract import extract_reflection_note
 from reflection_apply import (
     resolve_hide_field,
@@ -212,6 +213,9 @@ Rules:
   No phrases like "that's great," "you seem good at," or "that shows you're creative."
 - If the user says "I don't know" or "it just makes me happy," do not ask "why" again. \
   Instead, shift to a concrete or sensory detail (e.g., "Do you prefer dancing alone or in a group?").
+- If their last answer was only a word or two ("yes", "both", "alone"), do not ask another either/or \
+  question. Ask for one small concrete thing instead: the last time they did it, what they made, or \
+  what they noticed (e.g., "What was the last photo you took that you liked?").
 - Never steer toward a specific career or job title. Stay open-ended.
 - Output ONLY the question — no preamble, no commentary.""" + SAFETY_GUARDRAILS
 
@@ -227,17 +231,25 @@ TONE AND LANGUAGE
 - Match the student's energy: stay relaxed when they are relaxed and enthusiastic when they are excited.
 
 RESPONSE RULES
-Structure every reply the same way, whether it's a doubt, a question, or a task:
-1. One plain sentence that directly answers the question - no wind-up.
-2. 2 to 4 short bullet points with the real, useful detail.
-3. One small real-world example that makes it concrete.
-4. One gentle follow-up question at the end, unless the reply genuinely does not call for one.
+- Start with a plain, direct answer to what was asked. No wind-up.
+- Then let the shape fit the question. There is no template:
+  - A quick or personal question gets two or three plain sentences and nothing else.
+  - Use bullet points only when you are really listing separate things (steps, options, parts), and only as many as there are: often 2 or 3, never more than 4.
+  - Add a small real-world example only when it makes something clearer. Many replies don't need one.
+  - End with a question only when it would actually move the conversation on. Often the better ending is just to stop.
+- Look at your earlier replies in this conversation and do not repeat their shape. If your last reply had bullets, an example and a closing question, this one should not have all three.
 - Use simple, everyday words a high-school student can follow.
 - Never use em dashes - use a period or comma instead.
 - Never write a wall of text, dense paragraph, syllabus, prerequisite list, or job-requirements page.
 - Do not dump tools, technologies, courses, or technical concepts unless they are relevant to the question.
 - If the question is broad or technical, give ONE honest, useful answer first instead of an exhaustive roadmap. Add deeper technical detail only when the student asks for it.
 - Be encouraging but honest - never a hollow promise like "Absolutely, you can!" Say what it actually takes instead (regular practice, real training, patience, that everyone's path looks different). Honesty is the encouragement, not reassurance for its own sake.
+
+THE STUDENT'S RESULTS ARE NOT YOURS TO INVENT
+- Which careers connect to this student is worked out elsewhere, from their scored conversation and real occupation data, and shown on their Career Graph and Inference pages. You do not produce that result.
+- If they ask which careers, jobs or paths fit, suit or match them, never answer with a list of careers of your own. Say that their Career Graph page shows the real ones, and follow the "REAL RESULTS" note if one appears at the end of these instructions.
+- Do not bring this up unless they ask. Most messages have nothing to do with it.
+- You can always explain any career or field the student names themselves.
 
 EXPLORATION
 - Help the student explore hobbies, skills, projects, fields, and possible directions without pushing them toward a specific career.
@@ -256,7 +268,7 @@ When the student asks for something to try, adapt the difficulty to what they ha
 ENGAGEMENT
 - Bring ideas to life with concrete examples, relatable situations, creative angles, or real-world connections when useful.
 - Keep the conversation open and low-pressure.
-- When a follow-up question would genuinely help the conversation continue, end with ONE short, natural question.
+- When a follow-up question would genuinely help the conversation continue, end with ONE short, natural question. Not every reply needs one.
 """ + SAFETY_GUARDRAILS
 
 # Added to PHASE2_SYSTEM_PROMPT only for a student's first message right
@@ -278,11 +290,116 @@ CLOSING_MESSAGE = (
     "You can see some directions connected to what you've shared, or keep talking with me."
 )
 
+# Shown once, the first time the intake reaches its last question
+# without enough to score. It says what kind of answer helps, and the
+# conversation then simply carries on with another question (see
+# chat_message) instead of stopping there.
 INSUFFICIENT_CONTENT_MESSAGE = (
-    "It looks like we didn't get to chat much yet. "
-    "Try sharing something you enjoyed doing recently, "
-    "or a hobby you find interesting. Even one small detail helps!"
+    "I don't have quite enough to go on yet, so I can't show you real patterns or directions. "
+    "Short answers are completely fine. What helps most is one concrete detail: "
+    "something you actually did, what you liked about it, or a small example. "
+    "A sentence is plenty. Let's keep going."
 )
+
+# The honest answer to "what career fits me?" before any real result
+# exists. Fixed text, not generated: this is the one reply that must
+# never drift into a plausible-sounding list.
+NO_RESULTS_YET_MESSAGE = (
+    "Not yet, and I'd rather not guess. Real directions come from what you tell me in these "
+    "first few questions, and I don't have enough to go on so far. I could list careers that "
+    "sound plausible, but they wouldn't be based on you. "
+    "A sentence or two per answer is all it takes, so let's keep going."
+)
+
+FALLBACK_INTAKE_QUESTION = "What's one thing you did recently that you'd happily do again?"
+
+# Added to the intake prompt once the first 7 answers weren't enough.
+EXTENDED_INTAKE_ADDITION = """
+
+The student's answers so far have been very short, so there isn't enough yet to notice any pattern. \
+Ask one easy, concrete question that invites a specific example or detail from their own experience \
+(what they did, made, watched, fixed or noticed). Never an either/or or yes/no question."""
+
+# Light, occasional pointer to the results pages during open chat -
+# appended in code on every NUDGE_EVERY-th open-chat message, never
+# left to the model, so it can't turn up in every reply.
+NUDGE_EVERY = 6
+RESULTS_NUDGES = [
+    "Whenever you'd like a pause, your Inference and Career Graph pages show where what you've shared is pointing.",
+    "No rush, but if you're curious where this is heading, your Career Graph and Inference pages keep up with what you tell me.",
+]
+
+# Words that carry no evidence on their own. The intake gate counts
+# DISTINCT words that are neither these nor ordinary stopwords.
+FILLER_WORDS = frozenset("""
+idk dont don't know dunno ahh ah no nah nope maybe hmm hm ok okay sure yes yeah yep nothing
+whatever idc meh guess think like love enjoy really just thing things stuff something anything
+everything kinda lol haha bit lot much also well good nice fun honestly actually probably
+mostly sometimes
+""".split())
+
+# Enough to score: 5 distinct content words across the student's typed
+# answers. The earlier rule (12 words longer than 2 letters) counted
+# "the" and "and" but not "F1" or "AI", and turned away brief, genuine
+# answers: "photography / both / soft lighting / yes / portraits /
+# alone / not sure" scored 8 of 12 under it, though the scorer reads
+# that transcript sensibly (creates_expresses 0.7, everything else
+# 0.2 or below). Pure filler ("idk", "ok", "maybe") still counts 0-2.
+MIN_EVIDENCE_WORDS = 5
+
+
+def evidence_word_count(user_messages: list) -> int:
+    words = set()
+    for text in user_messages:
+        for word in re.findall(r"[a-z0-9']+", text.lower()):
+            if len(word) > 1 and word not in STOPWORDS and word not in FILLER_WORDS:
+                words.add(word)
+    return len(words)
+
+
+_CAREER_WORDS = re.compile(r"\b(careers?|jobs?|professions?|occupations?|work as|become|future|path|paths|field|fields|directions?)\b")
+_ABOUT_ME = re.compile(r"\b(me|my|i|i'm|im|myself)\b")
+_ASKING = re.compile(
+    r"\?|^\s*(what|which|is|isn't|isnt|are|aren't|can|could|do|does|should|so|any|tell|show|give|suggest|recommend)\b"
+)
+
+
+def is_career_match_question(text: str) -> bool:
+    """True when the student is asking what career/direction fits THEM
+    ("isn't there a career path for me yet?", "what should I become?"),
+    as opposed to mentioning a job or asking about one in general."""
+    lowered = text.lower()
+    return bool(_CAREER_WORDS.search(lowered) and _ABOUT_ME.search(lowered) and _ASKING.search(lowered))
+
+
+def shown_career_titles(session_id: str) -> list:
+    """Real occupation titles on this student's Career Graph, if they
+    have opened it (the built tree is cached then). Empty otherwise -
+    the chat never builds, or guesses at, a tree of its own."""
+    for key, cached in CAREER_TREE_CACHE.items():
+        if key.startswith(f"{session_id}_"):
+            return [n["fullTitle"] for n in cached["nodes"] if n["type"] == "career"]
+    return []
+
+
+def build_results_note(session_id: str) -> str:
+    """The "REAL RESULTS" note PHASE2_SYSTEM_PROMPT refers to, added
+    only to the reply for a message that asks what fits the student."""
+    titles = shown_career_titles(session_id)
+    if titles:
+        return (
+            "\n\nREAL RESULTS\nThe student's latest message asks what fits them. "
+            "Their Career Graph currently shows these real occupations, chosen "
+            "from their scored conversation and real occupation data: " + "; ".join(titles) + ". "
+            "If they ask which careers or paths fit them, refer only to these and point them to the "
+            "Career Graph page for the full picture. Do not add careers of your own to that list."
+        )
+    return (
+        "\n\nREAL RESULTS\nThe student's latest message asks what fits them. They have real results, but "
+        "you cannot see their Career Graph from here. Do not name any careers as their matches. Tell them "
+        "their Career Graph page shows the real ones, built from what they've shared, and offer to talk "
+        "through anything they find there. Keep it to two or three sentences."
+    )
 
 
 def strip_em_dashes(text: str) -> str:
@@ -652,13 +769,20 @@ def chat_message(req: MessageRequest) -> MessageResponse:
         raise HTTPException(status_code=404, detail="Session not found")
     require_session_owner(req.session_id, req.token)
 
+    # Decided before this message is stored: the thread is in open
+    # chat only once a real score exists. Until then it stays in the
+    # structured intake, however many messages that takes - the open
+    # mentor prompt is never used on a thread with no real result, so
+    # it has nothing to dress up as one.
+    has_scores = get_latest_inference_scores(req.session_id) is not None
+
     add_message(req.session_id, "user", req.message, suggested=bool(req.suggested))
     question_index = count_user_messages(req.session_id)
 
     # ─────────────────────────────────────────────────────────────
-    # PHASE 1: STRUCTURED INTAKE (TURNS 1 TO 7)
+    # PHASE 1: STRUCTURED INTAKE (UNTIL THERE IS ENOUGH TO SCORE)
     # ─────────────────────────────────────────────────────────────
-    if question_index <= TOTAL_PHASE1_QUESTIONS:
+    if not has_scores:
         log_event(req.session_id, "message_sent", {
             "turn": question_index,
             "character_count": len(req.message)
@@ -669,65 +793,60 @@ def chat_message(req: MessageRequest) -> MessageResponse:
         if question_index == TITLE_AI_TURN:
             maybe_generate_title(req.session_id)
 
-        # Turn 7 Checkpoint
-        if question_index == TOTAL_PHASE1_QUESTIONS:
-            phase1_transcript = get_messages(req.session_id)
-            user_messages = [m["content"] for m in phase1_transcript if m["role"] == "user"]
-            combined_text = " ".join(user_messages).strip().lower()
+        asked_for_careers = is_career_match_question(req.message)
+        extended = question_index >= TOTAL_PHASE1_QUESTIONS
 
-            # Filter out empty / dismissive responses
-            filler = {
-                "idk", "i don't know", "dont know", "don't know", "ahh", "ah", "no", "nah",
-                "maybe", "hmm", "hm", "ok", "okay", "sure", "yes", "nope", "yeah", "yep",
-                "nothing", "not sure", "dunno", "whatever", "idc", "meh"
-            }
-            meaningful_words = [
-                w for w in combined_text.split()
-                if w not in filler and len(w) > 2
-            ]
+        if extended:
+            evidence = get_messages(req.session_id, evidence_only=True)
+            # "Is there a career for me yet?" says nothing about the
+            # student - asking it must not be what tips the gate.
+            word_count = evidence_word_count([
+                m["content"] for m in evidence
+                if m["role"] == "user" and not is_career_match_question(m["content"])
+            ])
 
-            # If user gave almost no real info → don't score
-            if len(meaningful_words) < 12:
-                add_message(req.session_id, "assistant", INSUFFICIENT_CONTENT_MESSAGE)
-                log_event(req.session_id, "insufficient_content", {
-                    "word_count": len(meaningful_words)
+            if word_count >= MIN_EVIDENCE_WORDS:
+                add_message(req.session_id, "assistant", CLOSING_MESSAGE)
+                log_event(req.session_id, "session_completed", {"total_turns": question_index})
+                maybe_generate_title(req.session_id)
+
+                scores = score_session(evidence)
+                log_event(req.session_id, "score_computed", {
+                    "scores": scores,
+                    "scored_at_message_count": count_user_messages(req.session_id, evidence_only=True),
                 })
+                print(f"[session {req.session_id}] Phase 1 scoring completed & saved: {scores}")
+
                 return MessageResponse(
-                    reply=INSUFFICIENT_CONTENT_MESSAGE,
+                    reply=CLOSING_MESSAGE,
                     question_index=TOTAL_PHASE1_QUESTIONS,
                     total_questions=TOTAL_PHASE1_QUESTIONS,
-                    intake_complete=False,
+                    intake_complete=True,
                 )
 
-            # Normal scoring flow
-            add_message(req.session_id, "assistant", CLOSING_MESSAGE)
-            log_event(req.session_id, "session_completed", {"total_turns": TOTAL_PHASE1_QUESTIONS})
-            maybe_generate_title(req.session_id)
+            log_event(req.session_id, "insufficient_content", {"word_count": word_count, "turn": question_index})
 
-            scores = score_session(get_messages(req.session_id, evidence_only=True))
-            log_event(req.session_id, "score_computed", {
-                "scores": scores,
-                "scored_at_message_count": count_user_messages(req.session_id, evidence_only=True),
-            })
-            print(f"[session {req.session_id}] Phase 1 scoring completed & saved: {scores}")
-
-            return MessageResponse(
-                reply=CLOSING_MESSAGE,
-                question_index=TOTAL_PHASE1_QUESTIONS,
-                total_questions=TOTAL_PHASE1_QUESTIONS,
-                intake_complete=True,
-            )
-
-        # Turns 1–6: normal follow-up
+        # One more question. The model is only ever asked for a
+        # question here, never for an answer.
         history = get_messages(req.session_id)
+        system_prompt = FOLLOWUP_SYSTEM_PROMPT + build_context_note(req.context)
+        if extended:
+            system_prompt += EXTENDED_INTAKE_ADDITION
         try:
-            reply = call_llm(
-                messages=history,
-                system_prompt=FOLLOWUP_SYSTEM_PROMPT + build_context_note(req.context)
-            )
+            question = call_llm(messages=history, system_prompt=system_prompt)
         except Exception as e:
             print(f"\n[LLM ERROR]: {e}\n")
-            reply = "Sorry, I'm having trouble responding right now — try again in a moment."
+            question = (
+                FALLBACK_INTAKE_QUESTION if extended or asked_for_careers
+                else "Sorry, I'm having trouble responding right now — try again in a moment."
+            )
+
+        if asked_for_careers:
+            reply = f"{NO_RESULTS_YET_MESSAGE}\n\n{question}"
+        elif question_index == TOTAL_PHASE1_QUESTIONS:
+            reply = f"{INSUFFICIENT_CONTENT_MESSAGE}\n\n{question}"
+        else:
+            reply = question
 
         add_message(req.session_id, "assistant", reply)
         log_event(req.session_id, "followup_generated", {
@@ -737,43 +856,51 @@ def chat_message(req: MessageRequest) -> MessageResponse:
 
         return MessageResponse(
             reply=reply,
-            question_index=question_index,
+            # Capped: the progress bar stays full, not past full, while
+            # the intake runs over.
+            question_index=min(question_index, TOTAL_PHASE1_QUESTIONS),
             total_questions=TOTAL_PHASE1_QUESTIONS,
         )
 
     # ─────────────────────────────────────────────────────────────
-    # PHASE 2: OPEN EXPLORATION (TURNS 8+)
+    # PHASE 2: OPEN EXPLORATION (A REAL SCORE EXISTS)
     # ─────────────────────────────────────────────────────────────
-    else:
-        log_event(req.session_id, "phase2_message", {
-            "turn": question_index,
-            "character_count": len(req.message)
-        })
+    log_event(req.session_id, "phase2_message", {
+        "turn": question_index,
+        "character_count": len(req.message)
+    })
 
-        history = get_messages(req.session_id)
-        system_prompt = PHASE2_SYSTEM_PROMPT + build_context_note(req.context)
-        if req.introRequest:
-            system_prompt += CAREER_GRAPH_INTRO_ADDITION
-        try:
-            # Use Phase 2 conversational prompt
-            reply = call_llm(messages=history, system_prompt=system_prompt)
-            reply = strip_em_dashes(reply)
-        except Exception as e:
-            print(f"\n[PHASE 2 LLM ERROR]: {e}\n")
-            reply = "I'm here to help you explore! What else would you like to talk about?"
+    history = get_messages(req.session_id)
+    system_prompt = PHASE2_SYSTEM_PROMPT + build_context_note(req.context)
+    if req.introRequest:
+        system_prompt += CAREER_GRAPH_INTRO_ADDITION
+    if is_career_match_question(req.message):
+        system_prompt += build_results_note(req.session_id)
+    try:
+        # Use Phase 2 conversational prompt
+        reply = call_llm(messages=history, system_prompt=system_prompt)
+        reply = strip_em_dashes(reply)
+    except Exception as e:
+        print(f"\n[PHASE 2 LLM ERROR]: {e}\n")
+        reply = "I'm here to help you explore! What else would you like to talk about?"
 
-        add_message(req.session_id, "assistant", reply)
-        log_event(req.session_id, "phase2_followup", {
-            "turn": question_index,
-            "reply_length": len(reply)
-        })
+    open_chat_turn = count_user_messages(req.session_id, evidence_only=True) - TOTAL_PHASE1_QUESTIONS
+    if open_chat_turn > 0 and open_chat_turn % NUDGE_EVERY == 0 and not req.suggested and not req.introRequest:
+        nudge = RESULTS_NUDGES[(open_chat_turn // NUDGE_EVERY) % len(RESULTS_NUDGES)]
+        reply = f"{reply}\n\n{nudge}"
 
-        # Phase 2 messages DO NOT trigger score_session()!
-        return MessageResponse(
-            reply=reply,
-            question_index=question_index,
-            total_questions=TOTAL_PHASE1_QUESTIONS,
-        )
+    add_message(req.session_id, "assistant", reply)
+    log_event(req.session_id, "phase2_followup", {
+        "turn": question_index,
+        "reply_length": len(reply)
+    })
+
+    # Phase 2 messages DO NOT trigger score_session()!
+    return MessageResponse(
+        reply=reply,
+        question_index=question_index,
+        total_questions=TOTAL_PHASE1_QUESTIONS,
+    )
 
 
 @app.get("/api/chat/session/{session_id}")
@@ -788,6 +915,9 @@ def get_session_history(session_id: str, token: str):
         "session_id": session_id,
         "total_messages": len(history),
         "user_messages_count": user_count,
+        # False while the thread is still in the intake, which can run
+        # past 7 messages when the answers were too short to score.
+        "intake_complete": get_latest_inference_scores(session_id) is not None,
         "transcript": history
     }
 

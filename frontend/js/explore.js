@@ -728,7 +728,12 @@
             }
 
             if (typeof data.user_messages_count === 'number') {
-                questionIndex = data.user_messages_count;
+                // A thread whose answers were too short to score is
+                // still in the intake even past 7 messages - keep the
+                // intake bar (full) rather than showing open chat.
+                questionIndex = data.intake_complete === false
+                    ? Math.min(data.user_messages_count, totalQuestions)
+                    : data.user_messages_count;
             }
 
             updateProgress();
