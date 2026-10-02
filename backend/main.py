@@ -37,7 +37,6 @@ from db import (
     count_user_messages,
     session_exists,
     log_event,
-    get_dashboard_metrics,
     get_session_timeline,
     get_timeline_for_sessions,
     get_field_summary,
@@ -1508,12 +1507,6 @@ def record_event(req: EventLogRequest):
     require_session_owner(req.session_id, req.token)
     log_event(req.session_id, req.event_type, req.event_data)
     return {"status": "logged", "session_id": req.session_id, "event_type": req.event_type}
-
-
-@app.get("/api/dashboard/metrics")
-def get_metrics(token: str):
-    require_valid_token(token)
-    return {"status": "success", "metrics": get_dashboard_metrics()}
 
 
 @app.get("/api/dashboard/timeline/{session_id}")
