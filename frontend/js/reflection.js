@@ -298,6 +298,7 @@
                 takeInput.value = '';
                 takeCounter.textContent = '0/1000';
                 await loadTakeNotes();
+                window.dispatchEvent(new Event('kindling:preferences-change'));
                 K.toast('Noted. Kindling adjusted what it shows you.');
             }
             catch (error) {
@@ -320,6 +321,7 @@
                 const response = await fetch(`${K.API_BASE_URL}/api/reflection/preference/${chipEl.dataset.prefId}?token=${encodeURIComponent(token)}`, { method: 'DELETE' });
                 if (!response.ok) throw new Error(`Server returned ${response.status}`);
                 await loadTakeNotes();
+                window.dispatchEvent(new Event('kindling:preferences-change'));
                 K.toast('Undone.');
             }
             catch (error) {
@@ -338,6 +340,7 @@
                 const response = await fetch(`${K.API_BASE_URL}/api/reflection/note/${btn.dataset.deleteNote}?token=${encodeURIComponent(token)}`, { method: 'DELETE' });
                 if (!response.ok) throw new Error(`Server returned ${response.status}`);
                 await loadTakeNotes();
+                window.dispatchEvent(new Event('kindling:preferences-change'));
                 K.toast('Note deleted.');
             }
             catch (error) {

@@ -62,7 +62,10 @@
         hub: 'var(--cool-soft)', area: 'var(--violet)', related: 'var(--warm-soft)', direction: 'var(--amber)',
         // Real Career Graph tree node types (backend/career_tree.py):
         // field reuses "related"'s cream tone, career reuses "direction"'s amber.
-        field: 'var(--warm-soft)', career: 'var(--amber)'
+        field: 'var(--warm-soft)', career: 'var(--amber)',
+        // An example specialisation under a career - drawn hollow
+        // (see career-graph.js), same amber as the career it belongs to.
+        spec: 'var(--amber)'
     };
 
     K.addGlow = function addGlow(svg, dev = 6) {

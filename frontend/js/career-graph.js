@@ -36,6 +36,22 @@
     let opened = new Set();
     let graphFilter = 'all';
 
+    // What the student has added on top of the server's first view:
+    // "Show more" layers (real occupations, from POST /api/career-tree/
+    // more) and example specialisations under a career. Kept per
+    // thread + scope so it survives leaving the page and coming back,
+    // and re-merged onto each fresh tree (see loadTree). `remaining`
+    // is what the last "Show more" on a node said was still left.
+    const extras = {};
+    let treeKey = '';
+    const extrasFor = () => extras[treeKey] || (extras[treeKey] = { nodes: [], edges: [], remaining: {}, noSpecs: {} });
+
+    // A hide/focus preference changes which occupations are allowed
+    // on the map at all - anything added earlier may no longer be.
+    window.addEventListener('kindling:preferences-change', () => {
+        Object.keys(extras).forEach(k => delete extras[k]);
+    });
+
     const AREA_R = 175, FIELD_R = 265, CAREER_R = 350;
 
     function mapLabel(label) {
@@ -44,7 +60,8 @@
 
     const kindName = {
         hub: 'Center of your exploration', area: 'Area of interest',
-        field: 'Related field', career: 'Possible direction'
+        field: 'Related field', career: 'Possible direction',
+        spec: 'Example specialisation'
     };
     const branchSectionLabel = {
         hub: 'Areas branching from here', area: 'Fields branching from here', field: 'Careers branching from here'
@@ -184,6 +201,10 @@
                 return;
             }
 
+            treeKey = `${sessionId}|${combined ? 'all' : 'single'}`;
+            const remembered = extrasFor();
+            mergeIntoTree(remembered.nodes, remembered.edges, false);
+
             buildGraph();
 
             // FIX 2: Restore last selected node if user came back from chat
@@ -274,6 +295,18 @@
                     const r = CAREER_R + (k % 3) * 40;
                     careerNode.x = Math.cos(cAng) * r;
                     careerNode.y = Math.sin(cAng) * r;
+
+                    const specIds = childrenOf[careerId] || [];
+                    const specSpread = Math.min(0.5, 0.1 * specIds.length);
+                    specIds.forEach((specId, s) => {
+                        const st = specIds.length === 1 ? 0 : (s / (specIds.length - 1)) - 0.5;
+                        const sAng = cAng + st * specSpread;
+                        const sr = r + 78 + (s % 2) * 30;
+                        const specNode = byId[specId];
+                        specNode.ang = sAng;
+                        specNode.x = Math.cos(sAng) * sr;
+                        specNode.y = Math.sin(sAng) * sr;
+                    });
                 });
 
             });
@@ -290,7 +323,9 @@
         byId = {}; childrenOf = {}; neighbors = {}; nodeEls = {}; edgeEls = [];
 
         treeNodes.forEach(n => { byId[n.id] = { ...n }; });
-        treeEdges.filter(e => e.kind === 'branch').forEach(e => {
+        // 'example' edges (a career's example specialisations) are
+        // parent->child links too, just drawn dashed.
+        treeEdges.filter(e => e.kind === 'branch' || e.kind === 'example').forEach(e => {
             (childrenOf[e.source] = childrenOf[e.source] || []).push(e.target);
         });
         treeNodes.forEach(n => { neighbors[n.id] = new Set([n.id]); });
@@ -310,7 +345,7 @@
             const isCross = e.kind === 'cross';
             const stroke = isCross ? 'var(--muted)' : colorOf[Q.type];
             const path = el('path', {
-                class: 'edge ' + (isCross ? 'cross' : 'branch'),
+                class: 'edge ' + (isCross ? 'cross' : e.kind === 'example' ? 'example' : 'branch'),
                 d: `M${P.x} ${P.y} Q${mx} ${my} ${Q.x} ${Q.y}`,
                 stroke
             }, edgeLayer);
@@ -320,7 +355,8 @@
         const SIZES = {
             area: { core: 5, halo: 16, thresh: 0.3, lx: 14, ly: 18 },
             field: { core: 4, halo: 12, thresh: 0.28, lx: 11, ly: 15 },
-            career: { core: 3, halo: 9, thresh: 0.25, lx: 9, ly: 12 }
+            career: { core: 3, halo: 9, thresh: 0.25, lx: 9, ly: 12 },
+            spec: { core: 2.6, halo: 7, thresh: 0.25, lx: 8, ly: 11 }
         };
 
         const nodeLayer = el('g', {}, layer);
@@ -345,6 +381,16 @@
             const g = drawNode(nodeLayer, node, gGlow, opts);
             nodeEls[n.id] = g;
             if (opened.has(n.id)) g.classList.add('visited');
+
+            // Hollow: an example of how people specialise, not a real
+            // occupation from the dataset like every filled star is.
+            if (node.type === 'spec') {
+                const circles = g.querySelectorAll('circle');
+                circles[3].setAttribute('fill', 'none');
+                circles[3].setAttribute('stroke', colorOf.spec);
+                circles[3].setAttribute('stroke-width', '1.2');
+                circles[4].remove();
+            }
 
             if (node.type !== 'hub') {
                 const truncated = mapLabel(node.label);
@@ -391,7 +437,7 @@
             // labels can collide along that ray. Excluding area nodes
             // here meant that specific collision could never resolve.
             const items = treeNodes
-                .filter(n => n.type === 'area' || n.type === 'field' || n.type === 'career')
+                .filter(n => n.type === 'area' || n.type === 'field' || n.type === 'career' || n.type === 'spec')
                 .map(n => ({ node: byId[n.id], g: nodeEls[n.id] }))
                 .filter(it => it.g);
 
@@ -478,6 +524,7 @@
           <li><i class="dot-area"></i>Areas of interest</li>
           <li><i class="dot-related"></i>Related fields</li>
           <li><i class="dot-direction"></i>Possible directions</li>
+          <li><i class="dot-example"></i>Example specialisations, once you ask for them</li>
         </ul>
       </div>
       ${areaIds.length ? `<div class="panel-block"><p class="section-label">Start with an area</p><ul class="jump-list">${areaIds.map(chip).join('')}</ul></div>` : ''}
@@ -503,16 +550,46 @@
         const plural = /[a-z]s$/i.test(node.label.trim().split(/\s+/).pop());
         const article = plural ? '' : 'a ';
 
+        const parentNode = node.parent ? byId[node.parent] : null;
+
         const qs = node.type === 'hub'
             ? ["What patterns have you noticed in what I've shared?", "Which direction should I explore first?"]
+            : node.type === 'spec'
+            ? [`What does specialising in ${lc(node.label)} involve?`, `How do people get started in ${lc(node.label)}?`]
             : node.type === 'career'
             ? [`What does a day as ${article}${lc(node.label)} look like?`, `How do people get into work as ${article}${lc(node.label)}?`]
             : [`What questions ${plural ? 'do' : 'does'} ${lc(node.label)} try to answer?`, `How ${plural ? 'are' : 'is'} ${lc(node.label)} connected to what I've explored?`];
 
-        const parentNode = node.parent ? byId[node.parent] : null;
-        const why = node.why || (parentNode ? `Branches from ${parentNode.label}.${parentNode.why ? ' ' + parentNode.why : ''}` : '');
+        const why = node.type === 'spec'
+            ? `One of the ways people specialise as ${lc(parentNode.fullTitle || parentNode.label)}. It's an example to give you a picture, not a separate official occupation.`
+            : node.why || (parentNode ? `Branches from ${parentNode.label}.${parentNode.why ? ' ' + parentNode.why : ''}` : '');
 
         const branchLabel = branchSectionLabel[node.type];
+        const state = extrasFor();
+
+        // Area and field nodes: one more layer of real occupations per
+        // click, until the backend says nothing is left.
+        const canShowMore = node.type === 'area' || node.type === 'field';
+        const moreBlock = !canShowMore ? '' : state.remaining[id] === 0
+            ? `<div class="panel-block"><p class="depth-note">That's everything that fits here for now.</p></div>`
+            : `<div class="panel-block"><button class="btn-line" data-more>Show more in ${esc(node.label)}</button></div>`;
+
+        // Career nodes: where the work happens (filled in by
+        // loadWhere once the student has stayed on this node a
+        // moment) and, only when asked for, example specialisations.
+        const whereBlock = node.type !== 'career' ? '' :
+            `<div class="panel-block"><p class="section-label">Where this work happens</p><div data-where><p class="depth-note">Looking this up…</p></div></div>`;
+        const specBlock = node.type !== 'career' ? '' : `<div class="panel-block"><p class="section-label">Ways people specialise</p>${
+            kids.length
+                ? `<ul class="jump-list">${kids.map(chip).join('')}</ul><p class="depth-note">Examples, shown as hollow stars on the map. Not separate official occupations.</p>`
+                : state.noSpecs[id]
+                ? `<p class="depth-note">No well-established specialisations to show for this one.</p>`
+                : `<button class="btn-line" data-specialise>Show examples on the map</button>`
+        }</div>`;
+
+        const askTopic = node.type === 'spec'
+            ? `${lc(node.label)} as a specialisation within ${lc(parentNode.fullTitle || parentNode.label)}`
+            : lc(node.label);
 
         panelContent.innerHTML = `
       <button class="link-btn" data-overview>
@@ -526,14 +603,162 @@
       ${node.tasks?.length ? `<div class="panel-block"><p class="section-label">What the work looks like</p><ul class="task-list">${node.tasks.map(t => `<li>${esc(t)}</li>`).join('')}</ul></div>` : ''}
       ${node.tryIt ? `<div class="panel-block"><p class="section-label">Try it out</p><div class="try-card"><p>${esc(node.tryIt.text)}</p>
         <button class="btn-line" data-ask="I want to try this small task: ${esc(node.tryIt.text)} Can you walk me through it?">Try it with Kindling</button></div></div>` : ''}
-      ${why ? `<div class="panel-block"><p class="section-label">Connected to your exploration</p><p>${esc(why)}</p></div>` : ''}
-      ${kids.length ? `<div class="panel-block"><p class="section-label">${branchLabel}</p><ul class="jump-list">${kids.map(chip).join('')}</ul></div>` : ''}
+      ${why ? `<div class="panel-block"><p class="section-label">${node.type === 'spec' ? 'About this example' : 'Connected to your exploration'}</p><p>${esc(why)}</p></div>` : ''}
+      ${whereBlock}
+      ${specBlock}
+      ${kids.length && node.type !== 'career' ? `<div class="panel-block"><p class="section-label">${branchLabel}</p><ul class="jump-list">${kids.map(chip).join('')}</ul></div>` : ''}
+      ${moreBlock}
       ${related.length ? `<div class="panel-block"><p class="section-label">Also linked to</p><ul class="link-list">${related.map(rid => linkItem(id, rid)).join('')}</ul></div>` : ''}
       <div class="panel-block"><p class="section-label">Questions you could ask</p>
         <ul class="q-list">${qs.map(q => `<li><button data-ask="${esc(q)}">${esc(q)}<svg width="12" height="12"><use href="#arrow"/></svg></button></li>`).join('')}</ul></div>
-      <div class="panel-cta"><button class="btn-gold sm" data-ask="Tell me more about ${esc(lc(node.label))}.">Explore this in a conversation</button></div>`;
+      <div class="panel-cta"><button class="btn-gold sm" data-ask="Tell me more about ${esc(askTopic)}.">Explore this in a conversation</button></div>`;
         panel.scrollTop = 0;
 
+        if (node.type === 'career') loadWhere(node);
+
+    }
+
+    /* =====================================================
+       DEPTH - "Show more", "Where this work happens" and
+       "Ways people specialise"
+       ===================================================== */
+
+    // Adds nodes/edges to the tree already on screen, skipping any
+    // that are already there or whose parent isn't (a remembered
+    // layer can outlive the node it hung from). Returns what was
+    // actually added.
+    function mergeIntoTree(newNodes, newEdges, remember = true) {
+        const have = new Set(treeNodes.map(n => n.id));
+        const added = [];
+        newNodes.forEach(n => {
+            if (have.has(n.id) || !have.has(n.parent)) return;
+            treeNodes.push(n);
+            have.add(n.id);
+            added.push(n);
+        });
+        const addedIds = new Set(added.map(n => n.id));
+        const addedEdges = newEdges.filter(e => addedIds.has(e.target) && have.has(e.source));
+        treeEdges.push(...addedEdges);
+
+        if (remember) {
+            const state = extrasFor();
+            state.nodes.push(...added);
+            state.edges.push(...addedEdges);
+        }
+        return added;
+    }
+
+    // Redraws the map with whatever was just merged in, keeping the
+    // current selection and its panel.
+    function redrawKeepingSelection() {
+        buildGraph();
+        Object.entries(nodeEls).forEach(([k, g]) => g.classList.toggle('is-selected', k === selected));
+        light(selected);
+        if (selected && byId[selected]) renderNode(selected);
+    }
+
+    async function showMore(id, btn) {
+        const node = byId[id];
+        const areaId = node.type === 'area' ? id : node.parent;
+        const label = btn.textContent;
+        btn.disabled = true;
+        btn.textContent = 'Finding more…';
+
+        try {
+            const response = await fetch(`${K.API_BASE_URL}/api/career-tree/more`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    session_id: K.getResultsSessionId(),
+                    token: K.getAuthToken(),
+                    scope: K.isConnectThreadsOn() ? 'all' : 'single',
+                    node_id: id,
+                    shown: treeNodes.filter(n => n.type === 'career').map(n => n.soc),
+                    fields: childrenOf[areaId] || []
+                })
+            });
+            if (!response.ok) throw new Error(`Server returned ${response.status}`);
+
+            const data = await response.json();
+            const added = mergeIntoTree(data.nodes || [], data.edges || []);
+            const addedCareers = added.filter(n => n.type === 'career').length;
+            extrasFor().remaining[id] = addedCareers ? data.remaining : 0;
+            redrawKeepingSelection();
+        }
+        catch (error) {
+            console.error('Failed to load more careers:', error);
+            toast("We couldn't load more right now. Please try again.");
+            btn.disabled = false;
+            btn.textContent = label;
+        }
+    }
+
+    // One request per occupation per visit; the backend caches the
+    // generated answer for everyone after the first time. A failure
+    // isn't remembered, so the next try asks again.
+    const depthRequests = new Map();
+    function fetchDepth(soc) {
+        if (!depthRequests.has(soc)) {
+            const url = `${K.API_BASE_URL}/api/career-depth/${K.getResultsSessionId()}/${encodeURIComponent(soc)}?token=${encodeURIComponent(K.getAuthToken())}`;
+            depthRequests.set(soc, fetch(url)
+                .then(r => { if (!r.ok) throw new Error(`Server returned ${r.status}`); return r.json(); })
+                .catch(error => {
+                    console.error('Failed to load career depth:', error);
+                    depthRequests.delete(soc);
+                    return null;
+                }));
+        }
+        return depthRequests.get(soc);
+    }
+
+    // Waits a moment before asking, so clicking quickly through
+    // several careers doesn't spend an AI call on each one.
+    const WHERE_DWELL_MS = 900;
+    let whereTimer = null;
+    function loadWhere(node) {
+        clearTimeout(whereTimer);
+        const fill = async () => {
+            const depth = await fetchDepth(node.soc);
+            const box = selected === node.id ? $('[data-where]', panelContent) : null;
+            if (!box) return;
+            const places = depth?.workplaces || [];
+            if (!places.length) {
+                box.innerHTML = `<p class="depth-note">We couldn't load this right now.</p>`;
+                return;
+            }
+            box.innerHTML = `<ul class="where-list">${places.map(w =>
+                `<li>${esc(w.setting)}${w.examples?.length ? `<span class="where-eg">e.g. ${w.examples.map(esc).join(', ')}</span>` : ''}</li>`
+            ).join('')}</ul><p class="depth-note">Examples to give you a picture, not a complete list.</p>`;
+        };
+        if (depthRequests.has(node.soc)) fill();
+        else whereTimer = setTimeout(fill, WHERE_DWELL_MS);
+    }
+
+    async function showSpecialisations(id, btn) {
+        const node = byId[id];
+        const label = btn.textContent;
+        btn.disabled = true;
+        btn.textContent = 'Finding examples…';
+
+        const depth = await fetchDepth(node.soc);
+        if (!depth) {
+            toast("We couldn't load examples right now. Please try again.");
+            btn.disabled = false;
+            btn.textContent = label;
+            return;
+        }
+
+        const specs = depth.specialisations || [];
+        if (!specs.length) extrasFor().noSpecs[id] = true;
+
+        // Never real occupations: type 'spec', no SOC code, and only
+        // ever attached under the real career they're examples of.
+        const nodes = specs.map((s, i) => ({
+            id: `s:${node.soc}:${i}`, type: 'spec', label: s.name, description: s.about, parent: id
+        }));
+        const edges = nodes.map(n => ({ source: id, target: n.id, kind: 'example' }));
+        mergeIntoTree(nodes, edges);
+        redrawKeepingSelection();
     }
 
     let activeArea = null, activeStartedAt = null;
@@ -613,9 +838,19 @@
 
         if (e.target.closest('[data-overview]')) return selectNode(null);
 
+        const moreBtn = e.target.closest('[data-more]');
+        if (moreBtn && selected) return showMore(selected, moreBtn);
+
+        const specBtn = e.target.closest('[data-specialise]');
+        if (specBtn && selected) return showSpecialisations(selected, specBtn);
+
         const askBtn = e.target.closest('[data-ask]');
         if (askBtn) {
-            const node = selected ? byId[selected] : null;
+            // An example specialisation isn't an occupation of its own:
+            // the conversation is grounded in the real career it sits
+            // under, and the question itself names the specialisation.
+            const picked = selected ? byId[selected] : null;
+            const node = picked?.type === 'spec' ? byId[picked.parent] : picked;
 
             /*
              * Only the main CTA ("Explore this in a conversation")

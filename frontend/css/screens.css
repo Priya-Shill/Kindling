@@ -306,6 +306,7 @@
 .edge { fill: none; stroke-width: 1; opacity: 0.45; transition: opacity 0.3s; }
 .edge.branch { opacity: 0.28; }
 .edge.cross { opacity: 0.18; stroke-dasharray: 2 5; }
+.edge.example { opacity: 0.3; stroke-dasharray: 4 4; }
 .node { cursor: pointer; outline: none; transition: opacity 0.3s; }
 .node .halo { opacity: 0.35; transition: opacity 0.3s; }
 .node text {
@@ -441,6 +442,8 @@
 #graphMap .node.area text { font-size: 19px; opacity: 0.62; }
 #graphMap .node.field text { font-size: 15px; opacity: 0.55; }
 #graphMap .node.career text { font-size: 12.5px; opacity: 0.7; }
+#graphMap .node.spec text { font-size: 11.5px; opacity: 0.6; font-style: italic; }
+#graphMap .node.spec .halo { opacity: 0.12; }
 #graphMap.labels-all .node.area text,
 #graphMap.labels-all .node.field text,
 #graphMap.labels-all .node.career text { opacity: 1; }
@@ -530,6 +533,7 @@
 .map-layout.is-fullscreen #graphMap .node.area text { font-size: 21px; opacity: 0.85; }
 .map-layout.is-fullscreen #graphMap .node.field text { font-size: 17px; opacity: 0.82; }
 .map-layout.is-fullscreen #graphMap .node.career text { font-size: 14px; opacity: 0.92; }
+.map-layout.is-fullscreen #graphMap .node.spec text { font-size: 13px; opacity: 0.8; }
 .map-layout.is-fullscreen #graphMap .node.hub text { font-size: 23px; }
 .map-layout.is-fullscreen #graphMap .node text { fill: #fff; }
 
@@ -540,6 +544,7 @@
 .dot-area { background: var(--violet); box-shadow: 0 0 8px var(--violet); }
 .dot-related { background: var(--warm-soft); box-shadow: 0 0 8px var(--warm-soft); }
 .dot-direction { background: var(--amber); box-shadow: 0 0 8px var(--amber); }
+.dot-example { border: 1px solid var(--amber); }
 
 .panel-block { margin-top: 26px; }
 .panel-block p { font-size: 14px; color: var(--muted); line-height: 1.75; }
@@ -570,6 +575,9 @@
 .link-list button:hover { color: var(--fg); border-color: var(--border-strong); }
 .link-list i { width: 6px; height: 6px; border-radius: 50%; }
 .link-reason { margin-top: 6px; font-size: 13px; color: var(--faint); line-height: 1.55; }
+.where-list { list-style: disc; padding-left: 20px; display: grid; gap: 9px; color: var(--muted); font-size: 14px; line-height: 1.55; }
+.where-eg { display: block; font-size: 12.5px; color: var(--faint); }
+.panel-block .depth-note { margin-top: 10px; font-size: 12.5px; color: var(--faint); line-height: 1.55; }
 .q-list { list-style: none; display: grid; gap: 8px; }
 .q-list button {
   width: 100%; text-align: left;

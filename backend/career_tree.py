@@ -62,6 +62,15 @@ MAX_PATTERN_SHARE = 0.5
 MAX_CROSSLINKS_PER_NODE = 2
 MAX_CROSSLINKS_TOTAL = 12
 
+# "Show more" occupations get a plain, honest reason instead of an AI
+# "why" call: the student asked for more, nothing they said is being
+# quoted. One wording when the work is clearly about what they've been
+# saying (topic score, see topic_relevance), one when it only shares
+# the pattern.
+MORE_ON_TOPIC_SCORE = 3.0
+MORE_WHY_ON_TOPIC = "This is closely related to what you've been talking about."
+MORE_WHY_PATTERN = "This shares the {pattern} pattern with what you've explored. You asked to see more here."
+
 # Hybrid ranking: RIASEC fit and topic relevance are both expressed as
 # z-scores over the whole dataset, so a weight of 1 lets an occupation
 # that is clearly about what the student said (topic ~ +3) outrank one
@@ -303,26 +312,30 @@ def rank_patterns(all_occs_by_id: dict, scores: dict, shown_patterns: list, high
     return buckets, guaranteed_ids
 
 
-SHOW_MORE_BATCH = 10
+# "Show more" reveals one layer per click. A field's layer is simply
+# its next few occupations; an area's layer is spread across fields
+# (at most MORE_AREA_MAX_PER_FIELD from any one SOC minor group) so a
+# single large field can't take over the layer.
+MORE_FIELD_BATCH = 5
+MORE_AREA_BATCH = 6
+MORE_AREA_MAX_PER_FIELD = 2
 
 
 def more_occupations(scores: dict, shown_patterns: list, high_points: dict,
                       hidden_ids: frozenset, hidden_field_codes: frozenset, evidence_text,
-                      pattern: str, already_selected_ids: set, field_code: str = None,
-                      batch_size: int = SHOW_MORE_BATCH) -> tuple:
+                      pattern: str, already_selected_ids: set, field_code: str = None) -> list:
     """
-    The next real, unselected candidates for a "Show more" click on a
-    field or pattern/area node - continues the exact same ranking
-    (RIASEC fit + dataset-wide topic relevance) the first view was
-    drawn from, rather than a separate relevance pass, so "more" never
-    contradicts what's already shown. field_code narrows to one field
-    within the pattern; None means the whole pattern/area, which can
-    surface fields not present in the default view at all.
+    Every real candidate not yet shown for a "Show more" click on a
+    field or pattern/area node, best first - continues the exact same
+    ranking (RIASEC fit + dataset-wide topic relevance) the first view
+    was drawn from, rather than a separate relevance pass, so "more"
+    never contradicts what's already shown. field_code narrows to one
+    field within the pattern; None means the whole pattern/area, which
+    can surface fields not present in the default view at all.
 
     Deliberately goes past MAX_PER_FIELD once a student explicitly
     asks for more - that cap exists to keep the unsolicited first view
     balanced, not to cap how many real matches exist for a field.
-    Returns (next_batch, remaining_count_after_this_batch).
     """
     all_occs_by_id = {
         occ["id"]: occ for occ in load_career_graph()
@@ -341,9 +354,95 @@ def more_occupations(scores: dict, shown_patterns: list, high_points: dict,
                     or broad_group(occ_id) == field_code)
         bucket = [occ for occ in bucket if in_field(occ["id"])]
 
-    remaining = [occ for occ in bucket if occ["id"] not in already_selected_ids]
-    batch = remaining[:batch_size]
-    return batch, len(remaining) - len(batch)
+    return [occ for occ in bucket if occ["id"] not in already_selected_ids]
+
+
+def career_node(occ: dict, parent_id: str) -> dict:
+    sample_tasks = occ.get("sample_tasks", [])
+    return {
+        "id": f"o:{occ['id']}", "type": "career",
+        "label": occ["title"], "fullTitle": occ["title"],
+        "soc": occ["id"], "parent": parent_id,
+        "description": occ.get("description", ""),
+        "tasks": [t["text"] for t in sample_tasks],
+        "taskIds": [t["task_id"] for t in sample_tasks],
+    }
+
+
+def build_more_nodes(scores: dict, decisions: dict, hidden_ids: frozenset, hidden_field_codes: frozenset,
+                      evidence_text, node_id: str, shown_ids: set, existing_field_ids: set) -> dict:
+    """
+    The next layer for a "Show more" click on an area ("p:A") or field
+    ("f:A-27-2") node: {"nodes", "edges", "remaining"} to merge into
+    the tree the student already has. Only real occupations from the
+    dataset, in the same order the first view used.
+
+    A field's layer attaches to that field. An area's layer attaches
+    each occupation to the matching field already on the map, or to a
+    new field node for its SOC minor group.
+    """
+    empty = {"nodes": [], "edges": [], "remaining": 0}
+
+    kind, _, rest = node_id.partition(":")
+    letter, field_code = rest[:1], rest[2:] or None
+    pattern = LETTER_TO_AXIS.get(letter)
+    if kind not in ("p", "f") or pattern is None or (kind == "f") != bool(field_code):
+        return empty
+
+    shown_patterns = determine_shown_patterns(scores, decisions)
+    if pattern not in shown_patterns:
+        return empty
+
+    candidates = more_occupations(
+        scores, shown_patterns, load_interest_high_points(), hidden_ids, hidden_field_codes,
+        evidence_text, pattern, shown_ids, field_code,
+    )
+
+    if field_code:
+        batch = candidates[:MORE_FIELD_BATCH]
+    else:
+        batch, per_field = [], defaultdict(int)
+        for occ in candidates:
+            minor = minor_group(occ["id"])
+            if per_field[minor] >= MORE_AREA_MAX_PER_FIELD:
+                continue
+            per_field[minor] += 1
+            batch.append(occ)
+            if len(batch) == MORE_AREA_BATCH:
+                break
+
+    topic, _ = topic_relevance(evidence_text)
+    area_id = f"p:{letter}"
+    nodes, edges, new_fields = [], [], {}
+
+    for occ in batch:
+        if field_code:
+            parent_id = node_id
+        else:
+            broad_id = f"f:{letter}-{broad_group(occ['id'])}"
+            minor_id = f"f:{letter}-{minor_group(occ['id'])}"
+            parent_id = broad_id if broad_id in existing_field_ids else minor_id
+            if parent_id not in existing_field_ids:
+                new_fields.setdefault(parent_id, []).append(occ["id"])
+
+        node = career_node(occ, parent_id)
+        node["why"] = (
+            MORE_WHY_ON_TOPIC if topic.get(occ["id"], 0.0) >= MORE_ON_TOPIC_SCORE
+            else MORE_WHY_PATTERN.format(pattern=AXIS_LABELS[pattern])
+        )
+        nodes.append(node)
+        edges.append({"source": parent_id, "target": node["id"], "kind": "branch"})
+
+    for field_id, member_ids in new_fields.items():
+        code = field_id[4:]
+        nodes.insert(0, {
+            "id": field_id, "type": "field",
+            "label": field_display_label(code, member_ids), "officialTitle": field_title(code),
+            "parent": area_id,
+        })
+        edges.insert(0, {"source": area_id, "target": field_id, "kind": "branch"})
+
+    return {"nodes": nodes, "edges": edges, "remaining": len(candidates) - len(batch)}
 
 
 def select_occupations(scores: dict, shown_patterns: list, high_points: dict,
@@ -727,15 +826,7 @@ def build_career_tree_core(scores: dict, decisions: dict, hidden_ids: frozenset,
 
             for occ in occs:
                 occ_node_id = f"o:{occ['id']}"
-                sample_tasks = occ.get("sample_tasks", [])
-                nodes.append({
-                    "id": occ_node_id, "type": "career",
-                    "label": occ["title"], "fullTitle": occ["title"],
-                    "soc": occ["id"], "parent": field_id,
-                    "description": occ.get("description", ""),
-                    "tasks": [t["text"] for t in sample_tasks],
-                    "taskIds": [t["task_id"] for t in sample_tasks],
-                })
+                nodes.append(career_node(occ, field_id))
                 if occ["id"] in topic_match_ids:
                     # A strong match to the student's own words -
                     # tree_enrichment keeps these even if the AI

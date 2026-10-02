@@ -233,12 +233,11 @@ class TestFirstView(unittest.TestCase):
             scenario["scores"], shown, high_points, evidence_text=scenario["evidence"])
         already = {occ["id"] for occ in first_view}
 
-        batch, remaining = career_tree.more_occupations(
+        remaining = career_tree.more_occupations(
             scenario["scores"], shown, high_points, frozenset(), frozenset(), scenario["evidence"],
             pattern="creates_expresses", already_selected_ids=already)
-        self.assertEqual(len(batch), career_tree.SHOW_MORE_BATCH)
-        self.assertGreater(remaining, 0)
-        self.assertFalse(already & {occ["id"] for occ in batch})
+        self.assertGreater(len(remaining), 10)
+        self.assertFalse(already & {occ["id"] for occ in remaining})
 
 
 class TestFieldNodes(unittest.TestCase):

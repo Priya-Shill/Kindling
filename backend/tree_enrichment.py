@@ -130,6 +130,28 @@ def _prune_irrelevant_careers(tree: dict) -> dict:
     return {"nodes": nodes, "edges": edges}
 
 
+def apply_cached_strings(nodes: list) -> list:
+    """
+    The no-AI-call half of enrichment, for "Show more" layers: uses a
+    career's short title and "try it" text when an earlier build
+    already generated and cached them, and otherwise leaves the real
+    full title in place. A click on "Show more" never waits on, or
+    spends, an LLM call.
+    """
+    for node in nodes:
+        if node["type"] != "career":
+            continue
+        cached = get_cached_string(f"short_title:{node['soc']}")
+        if cached is not None:
+            node["label"] = cached
+        task_ids = node.get("taskIds", [])
+        if task_ids:
+            cached = get_cached_string(f"tryit:{task_ids[0]}")
+            if cached is not None:
+                node["tryIt"] = {"text": cached, "sourceTaskId": task_ids[0]}
+    return nodes
+
+
 def _run_job(job):
     cache_key, kind, generate_fn, apply_fn = job
     value = generate_fn()

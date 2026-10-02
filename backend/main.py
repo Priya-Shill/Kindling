@@ -7,6 +7,7 @@ Phase 2: Open Exploration & Mentorship (No Scoring Impact)
 import os
 import re
 import sys
+import json
 import time
 import secrets
 from collections import defaultdict
@@ -43,7 +44,10 @@ from db import (
     get_latest_inference_scores,
     get_latest_score_computed_event,
     has_profile_updated_after_last_score,
+    get_latest_trait_decisions,
     get_latest_trait_decisions_for_sessions,
+    get_cached_string,
+    set_cached_string,
     get_combined_messages_for_user,
     get_user_content_fingerprint,
     create_user,
@@ -72,8 +76,12 @@ from score_session import score_session
 from rag_explanation import get_top_tasks_for_occupation, compose_explanation, validate_explanation
 from matching import match_occupations, load_career_graph, MAX_RESULTS
 from title_generator import generate_title, build_fallback_title
-from career_tree import build_career_tree, build_career_tree_core, _load_reflection_shaping_for_user
-from tree_enrichment import enrich_tree_with_ai
+from career_tree import (
+    build_career_tree, build_career_tree_core, build_more_nodes,
+    _load_reflection_shaping, _load_reflection_shaping_for_user,
+)
+from tree_enrichment import enrich_tree_with_ai, apply_cached_strings
+from career_depth import generate_career_depth
 from reflection_extract import extract_reflection_note
 from reflection_apply import (
     resolve_hide_field,
@@ -1040,6 +1048,89 @@ def get_career_tree(session_id: str, token: str, scope: str = "single"):
     # Store in memory cache
     CAREER_TREE_CACHE[cache_key] = result
     return result
+
+class CareerTreeMoreRequest(BaseModel):
+    session_id: str
+    token: str
+    scope: Optional[str] = "single"
+    # The area ("p:A") or field ("f:A-27-2") node "Show more" was clicked on.
+    node_id: str
+    # SOC codes already on the student's map, and the field node ids
+    # under that area - the map itself lives in the browser.
+    shown: List[str] = []
+    fields: List[str] = []
+
+
+@app.post("/api/career-tree/more")
+def get_career_tree_more(req: CareerTreeMoreRequest):
+    """
+    The next layer of real occupations for one area or field node,
+    continuing the same ranking the first view used. Deterministic
+    and instant - no AI call (see tree_enrichment.apply_cached_strings).
+    """
+    if not session_exists(req.session_id):
+        raise HTTPException(status_code=404, detail="Session not found")
+    user_id = require_session_owner(req.session_id, req.token)
+
+    if req.scope == "all":
+        scores = get_combined_inference_scores(user_id)
+        session_ids = [s["session_id"] for s in get_sessions_for_user(user_id)]
+        decisions = get_latest_trait_decisions_for_sessions(session_ids)
+        hidden_ids, hidden_field_codes, _ = _load_reflection_shaping_for_user(user_id)
+        evidence = [
+            "\n".join(m["content"] for m in get_messages(sid, evidence_only=True) if m["role"] == "user")
+            for sid in session_ids
+        ]
+    else:
+        scores = get_latest_inference_scores(req.session_id)
+        decisions = get_latest_trait_decisions(req.session_id)
+        hidden_ids, hidden_field_codes, _ = _load_reflection_shaping(req.session_id)
+        evidence = "\n".join(
+            m["content"] for m in get_messages(req.session_id, evidence_only=True) if m["role"] == "user"
+        )
+
+    if scores is None:
+        raise HTTPException(status_code=404, detail="Inference scores are not available yet.")
+
+    more = build_more_nodes(
+        scores, decisions, hidden_ids, hidden_field_codes, evidence,
+        req.node_id, set(req.shown), set(req.fields),
+    )
+    apply_cached_strings(more["nodes"])
+    return {"status": "success", "node_id": req.node_id, **more}
+
+
+@app.get("/api/career-depth/{session_id}/{occupation_id}")
+def get_career_depth(session_id: str, occupation_id: str, token: str):
+    """
+    "Where this work happens" and "Ways people specialise" for one
+    real occupation (ai_core/career_depth.py). Generated once per
+    occupation and cached by SOC code; a failed generation is not
+    cached, so the next request simply tries again.
+    """
+    if not session_exists(session_id):
+        raise HTTPException(status_code=404, detail="Session not found")
+    require_session_owner(session_id, token)
+
+    occupation = next((occ for occ in load_career_graph() if occ["id"] == occupation_id), None)
+    if occupation is None:
+        raise HTTPException(status_code=404, detail="Occupation not found")
+
+    cache_key = f"depth:{occupation_id}"
+    cached = get_cached_string(cache_key)
+    if cached is not None:
+        return {"status": "success", "occupation_id": occupation_id, **json.loads(cached)}
+
+    depth = generate_career_depth(
+        occupation["title"], occupation.get("description", ""),
+        [t["text"] for t in occupation.get("sample_tasks", [])],
+    )
+    if depth is None:
+        raise HTTPException(status_code=503, detail="Couldn't load this right now. Please try again in a moment.")
+
+    set_cached_string(cache_key, "career_depth", json.dumps(depth))
+    return {"status": "success", "occupation_id": occupation_id, **depth}
+
 
 # ── User Control & Profile ────────────────────────────────────
 
