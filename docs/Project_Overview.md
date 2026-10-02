@@ -25,10 +25,10 @@ Kindling replaces static forms with an ongoing, natural dialogue assistant. Inst
 ---
 
 ## 3. Team Roles & Responsibilities
-* **Aleena (Data Engineering):** O*NET database processing and 923-occupation career graph clustering using Gaussian Mixture Models (GMM).
-* **Sruthi (AI Core):** Multi-provider LLM wrapper with automatic failover (`call_llm.py`), 6D behavioral prompt design, and prompt-injection defense (`inference_prompt.py`).
-* **Priya (Backend Engineering):** Session API layer, SQLite database integration (`kindling.db`), and state management (`db.py`, `main.py`).
-* **Gokul (Frontend & UI):** User experience design and interactive student dialogue prototypes in Figma.
+* **Aleena (Data Engineering):** O*NET database processing and the 923-occupation career graph (`Outputs/career_graph.json`), including clustering of occupations into families using Gaussian Mixture Models (GMM).
+* **Sruthi (AI Core):** Multi-provider LLM wrapper with automatic failover (`ai_core/call_llm.py`), 6D behavioral prompt design, and prompt-injection defense (`ai_core/inference_prompt.py`).
+* **Priya (Backend Engineering):** API layer, SQLite database integration (`kindling.db`), and state management (`backend/db.py`, `backend/main.py`).
+* **Gokul (Frontend & UI):** User experience design in Figma and the student-facing interface (`frontend/`).
 
 ---
 
@@ -37,3 +37,19 @@ Kindling replaces static forms with an ongoing, natural dialogue assistant. Inst
 2. **Krumboltz's Planned Happenstance Theory:** Recognizes that career interests emerge dynamically through curiosity and unplanned exploration.
 3. **Samuelson's Revealed Preference Theory:** Evaluates actual behavioral tendencies rather than self-reported statements.
 4. **Deci & Ryan's Self-Determination Theory (SDT):** Fosters student intrinsic motivation through autonomous exploration.
+
+---
+
+## 5. How Matching Works Today
+
+The 6 scores are one half of career matching. Occupations are chosen by code from the real O*NET dataset, never by the LLM, using a hybrid ranking:
+
+* **RIASEC fit** between the student's 6 scores and each occupation's O*NET interest profile.
+* **Local embedding similarity** between the student's own typed words and each occupation's description and tasks (`potion-base-8M`, run locally, no API call).
+* **A BM25 boost** for literal word matches the embedding already agrees with.
+
+The Career Graph then adds depth on request: "Show more" layers of real occupations (no AI call), AI-generated example specialisations shown as hollow nodes, and "Where this work happens" in the career panel. Field names are hand-written per SOC group, with the official title shown alongside.
+
+**Grounding, and its limits.** Occupations, descriptions, and tasks are real O*NET data, and each "why it's connected" sentence must quote the student verbatim. The named workplace examples and the example specialisations are AI-generated and are not verified; they are labelled as examples.
+
+See `Architecture_ rev1.md` for detail and the README for known limitations.
