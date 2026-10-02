@@ -327,6 +327,9 @@ class MessageRequest(BaseModel):
     # True only on the one message sent right after a student arrives
     # from a real Career Graph node click — see CAREER_GRAPH_INTRO_ADDITION.
     introRequest: Optional[bool] = None
+    # True when a button sent this message (Career Graph panel prompt,
+    # doubt chip, "Try a small task") instead of the student typing it.
+    suggested: Optional[bool] = None
 
 class MessageResponse(BaseModel):
     reply: str
@@ -641,7 +644,7 @@ def chat_message(req: MessageRequest) -> MessageResponse:
         raise HTTPException(status_code=404, detail="Session not found")
     require_session_owner(req.session_id, req.token)
 
-    add_message(req.session_id, "user", req.message)
+    add_message(req.session_id, "user", req.message, suggested=bool(req.suggested))
     question_index = count_user_messages(req.session_id)
 
     # ─────────────────────────────────────────────────────────────
@@ -693,10 +696,10 @@ def chat_message(req: MessageRequest) -> MessageResponse:
             log_event(req.session_id, "session_completed", {"total_turns": TOTAL_PHASE1_QUESTIONS})
             maybe_generate_title(req.session_id)
 
-            scores = score_session(phase1_transcript)
+            scores = score_session(get_messages(req.session_id, evidence_only=True))
             log_event(req.session_id, "score_computed", {
                 "scores": scores,
-                "scored_at_message_count": count_user_messages(req.session_id),
+                "scored_at_message_count": count_user_messages(req.session_id, evidence_only=True),
             })
             print(f"[session {req.session_id}] Phase 1 scoring completed & saved: {scores}")
 
@@ -793,6 +796,13 @@ def get_session_history(session_id: str, token: str):
 # since manually corrected their profile via Reflection's trait
 # decisions, since an automatic rescore must not silently overwrite an
 # explicit user correction.
+#
+# Only messages the student actually typed count, both as evidence and
+# toward the debounce. Button-sent prompts used to be scored as the
+# student's own words: "I want to try this small task: Direct
+# rehearsals to instruct dancers..." is an O*NET task statement, and
+# it alone moved Leads & persuades from 0.05 to 0.70 for a student who
+# had only ever described dancing alone (reproduced directly).
 RESCORE_MIN_NEW_USER_MESSAGES = 2
 
 
@@ -805,11 +815,11 @@ def maybe_rescore_session(session_id: str) -> None:
         return  # No Phase 1 score yet at all - nothing to debounce against.
     scored_at = last_score.get("scored_at_message_count", 0)
 
-    current_count = count_user_messages(session_id)
+    current_count = count_user_messages(session_id, evidence_only=True)
     if current_count - scored_at < RESCORE_MIN_NEW_USER_MESSAGES:
         return
 
-    transcript = get_messages(session_id)
+    transcript = get_messages(session_id, evidence_only=True)
     scores = score_session(transcript)
     log_event(session_id, "score_computed", {
         "scores": scores,
@@ -942,7 +952,7 @@ def get_combined_inference_scores(user_id: str) -> Optional[dict]:
     if cache_key in USER_SCORE_CACHE:
         return USER_SCORE_CACHE[cache_key]
 
-    messages = get_combined_messages_for_user(user_id)
+    messages = get_combined_messages_for_user(user_id, evidence_only=True)
     scores = score_session(messages) if messages else None
     USER_SCORE_CACHE[cache_key] = scores
     return scores
@@ -976,7 +986,7 @@ def get_career_tree(session_id: str, token: str, scope: str = "single"):
         tree = build_career_tree_core(scores, decisions, hidden_ids, hidden_field_codes, focus_targets)
 
         try:
-            tree = enrich_tree_with_ai(tree, get_combined_messages_for_user(user_id))
+            tree = enrich_tree_with_ai(tree, get_combined_messages_for_user(user_id, evidence_only=True))
         except Exception as e:
             print(f"[Career Tree Enrichment Fallback Triggered - combined]: {e}")
 
@@ -1007,7 +1017,7 @@ def get_career_tree(session_id: str, token: str, scope: str = "single"):
 
     # Optional AI enrichment with graceful timeout/fallback
     try:
-        tree = enrich_tree_with_ai(tree, get_messages(session_id))
+        tree = enrich_tree_with_ai(tree, get_messages(session_id, evidence_only=True))
     except Exception as e:
         print(f"[Career Tree Enrichment Fallback Triggered]: {e}")
         # Falls back cleanly to the instant base tree if LLMs are slow
@@ -1166,7 +1176,7 @@ def save_reflection_note(req: ReflectionNoteRequest):
     # backed (tree_enrichment.py), so this is cheap once their real
     # Career Graph has already been viewed once this session.
     tree = build_career_tree(req.session_id)
-    tree = enrich_tree_with_ai(tree, get_messages(req.session_id))
+    tree = enrich_tree_with_ai(tree, get_messages(req.session_id, evidence_only=True))
 
     note_id = create_reflection_note(user_id, req.session_id, note_text)
     created_preferences = []

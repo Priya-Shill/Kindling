@@ -230,7 +230,7 @@
     contextBarTask.addEventListener('click', () => {
         if (!activeContext) return;
         hideDoubtChips();
-        sendMessage(buildTryPrompt(activeContext));
+        sendMessage(buildTryPrompt(activeContext), { suggested: true });
     });
 
     // Never auto-sends anything - focuses the composer with a real
@@ -252,7 +252,7 @@
         // way, same as it does once the student types their own.
         $$('.chip', doubtChips).forEach(c => c.addEventListener('click', () => {
             hideDoubtChips();
-            sendMessage(c.textContent);
+            sendMessage(c.textContent, { suggested: true });
         }));
         input.focus();
     });
@@ -286,7 +286,7 @@
          * buttons actually asks the question.
          */
         if (context.prefillMessage) {
-            await sendMessage(context.prefillMessage, { introRequest: !!context.isIntroFlow });
+            await sendMessage(context.prefillMessage, { introRequest: !!context.isIntroFlow, suggested: true });
         }
     }
 
@@ -777,7 +777,10 @@
                         description: activeContext.description,
                         tasks: activeContext.tasks
                     } : undefined,
-                    introRequest: opts.introRequest || undefined
+                    introRequest: opts.introRequest || undefined,
+                    // Sent by a button, not typed - the backend keeps
+                    // these out of what it scores as the student's words.
+                    suggested: opts.suggested || undefined
                 })
             });
 

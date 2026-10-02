@@ -150,6 +150,20 @@
     });
 
     K.onFeelingChange.push((traitKey) => {
+        // "Not quite" zeroes exactly this one pattern on the backend
+        // (POST /api/user/trait/decision) - mirror that here so the
+        // radar shows the clicked pattern change and nothing else,
+        // instead of staying stale until the next visit. Combined
+        // scope is scored from every thread at once and isn't changed
+        // by a single thread's decision.
+        if (K.feelings[traitKey] === 'no' && !K.isConnectThreadsOn() && scores[traitKey]) {
+            scores[traitKey] = 0;
+            const keep = currentTheme;
+            renderRadar();
+            renderEvidence();
+            selectTheme(keep);
+            return;
+        }
         if (currentTheme === traitKey) renderFoot(traitKey);
     });
 

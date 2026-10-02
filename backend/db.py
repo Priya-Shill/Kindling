@@ -116,8 +116,40 @@ def init_db():
     if "name" not in existing_user_columns:
         conn.execute("ALTER TABLE users ADD COLUMN name TEXT")
 
+    # A user message sent by a button (a Career Graph panel prompt, a
+    # doubt chip, "Try a small task") carries Kindling's own wording -
+    # often a real O*NET task statement - not the student's. Flagged
+    # so scoring and evidence text never count it as something the
+    # student said (see get_messages' evidence_only).
+    existing_message_columns = {
+        row["name"] for row in conn.execute("PRAGMA table_info(messages)").fetchall()
+    }
+    if "suggested" not in existing_message_columns:
+        conn.execute("ALTER TABLE messages ADD COLUMN suggested INTEGER NOT NULL DEFAULT 0")
+        # One-time backfill for messages saved before the flag existed:
+        # the exact templates those buttons have always sent.
+        for pattern in SUGGESTED_MESSAGE_PATTERNS:
+            conn.execute(
+                "UPDATE messages SET suggested = 1 WHERE sender = 'user' AND content LIKE ?",
+                (pattern,)
+            )
+
     conn.commit()
     conn.close()
+
+SUGGESTED_MESSAGE_PATTERNS = [
+    "I want to try this small task:%",
+    "Tell me more about %.",
+    "Can you give me something small and doable I could try%",
+    "What does a day as % look like?",
+    "How do people get into work as %?",
+    "What questions do% try to answer?",
+    "How % connected to what I've explored?",
+    "Do I need formal training to work as %?",
+    "How do people in this field actually earn a living?",
+    "Is it too late for me to start exploring this?",
+]
+
 
 def create_session(user_id: str | None = None) -> str:
     """
@@ -297,23 +329,31 @@ def get_user_by_email(email: str) -> sqlite3.Row | None:
     return row
 
 
-def add_message(session_id: str, sender: str, content: str) -> None:
-    """Saves a single message (from 'user' or 'assistant') to the DB."""
+def add_message(session_id: str, sender: str, content: str, suggested: bool = False) -> None:
+    """Saves a single message (from 'user' or 'assistant') to the DB.
+    suggested marks a user message a button sent rather than one the
+    student typed."""
     now = datetime.now(timezone.utc).isoformat()
     
     conn = get_db()
     conn.execute(
-        "INSERT INTO messages (session_id, sender, content, timestamp) VALUES (?, ?, ?, ?)",
-        (session_id, sender, content, now)
+        "INSERT INTO messages (session_id, sender, content, timestamp, suggested) VALUES (?, ?, ?, ?, ?)",
+        (session_id, sender, content, now, 1 if suggested else 0)
     )
     conn.commit()
     conn.close()
 
-def get_messages(session_id: str) -> list[dict]:
-    """Retrieves all messages for a session formatted for the LLM."""
+def get_messages(session_id: str, evidence_only: bool = False) -> list[dict]:
+    """Retrieves all messages for a session formatted for the LLM.
+    evidence_only leaves out button-sent user messages - the right
+    view for anything that treats the transcript as evidence of what
+    the student said (scoring, topic relevance, "why connected"),
+    not for replaying the chat itself."""
     conn = get_db()
     cursor = conn.execute(
-        "SELECT sender, content FROM messages WHERE session_id = ? ORDER BY id",
+        "SELECT sender, content FROM messages WHERE session_id = ?"
+        + (" AND suggested = 0" if evidence_only else "")
+        + " ORDER BY id",
         (session_id,)
     )
     rows = cursor.fetchall()
@@ -328,10 +368,11 @@ def get_messages(session_id: str) -> list[dict]:
         
     return formatted_messages
 
-def count_user_messages(session_id: str) -> int:
+def count_user_messages(session_id: str, evidence_only: bool = False) -> int:
     conn = get_db()
     row = conn.execute(
-        "SELECT COUNT(*) AS cnt FROM messages WHERE session_id = ? AND sender = 'user'",
+        "SELECT COUNT(*) AS cnt FROM messages WHERE session_id = ? AND sender = 'user'"
+        + (" AND suggested = 0" if evidence_only else ""),
         (session_id,)
     ).fetchone()
     conn.close()
@@ -575,7 +616,7 @@ def get_timeline_for_sessions(session_ids: list[str]) -> list[dict]:
     return [dict(r) for r in rows]
 
 
-def get_combined_messages_for_user(user_id: str) -> list[dict]:
+def get_combined_messages_for_user(user_id: str, evidence_only: bool = False) -> list[dict]:
     """
     Every real message across all of this user's real sessions
     (get_sessions_for_user's own "at least one real user message"
@@ -587,7 +628,7 @@ def get_combined_messages_for_user(user_id: str) -> list[dict]:
     sessions_newest_first = get_sessions_for_user(user_id)
     combined = []
     for session in reversed(sessions_newest_first):
-        combined.extend(get_messages(session["session_id"]))
+        combined.extend(get_messages(session["session_id"], evidence_only))
     return combined
 
 
