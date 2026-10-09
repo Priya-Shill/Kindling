@@ -83,7 +83,7 @@ Field nodes use hand-written, student-friendly names for each SOC group (`backen
 ## Setup
 
 ```
-git clone https://github.com/Priya-on-loop/Kindling.git
+git clone https://github.com/Priya-Shill/Kindling.git
 cd Kindling
 pip install -r requirements.txt
 ```
@@ -161,7 +161,7 @@ Jira dashboard (status overview + Review 1 progress) : https://priyainloop.atlas
 
 Jira backlog (full sprint board, all issues) : https://priyainloop.atlassian.net/jira/software/projects/TCP/boards/4/backlog
 
-Deployed Link : https://priya-on-loop.github.io/Kindling/frontend/
+Deployed Link : https://priya-shill.github.io/Kindling/frontend/
 
 ## License
 
