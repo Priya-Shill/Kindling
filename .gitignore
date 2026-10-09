@@ -9,6 +9,7 @@ env/
 
 # Secrets & Keys
 .env
+.env.*
 
 # Python Cache
 __pycache__/
@@ -16,3 +17,12 @@ __pycache__/
 
 # IDE Settings
 .vscode/
+.claude/
+
+# Backups & Logs
+*.bak
+*.bak-*
+*.log
+
+# Node
+node_modules/
