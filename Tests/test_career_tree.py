@@ -2,6 +2,7 @@ import json
 import os
 import sys
 import unittest
+from unittest.mock import patch
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT_DIR)
@@ -16,11 +17,27 @@ with open(os.path.join(ROOT_DIR, "Outputs", "career_graph.json"), encoding="utf-
     REAL_OCCUPATION_IDS = {occ["id"] for occ in json.load(f)}
 
 
-def make_scored_session(client, turns):
-    r = client.post("/api/chat/start", json={})
+# Every AI call is mocked; no network. The two fixed profiles stand in
+# for what the scorer returns for each transcript below.
+BIOMATH_SCORES = {"builds_tinkers": 0.05, "investigates_why": 0.9, "creates_expresses": 0.1,
+                  "works_with_people": 0.15, "organizes_systems": 0.8, "leads_persuades": 0.1}
+ORGLEADS_SCORES = {"builds_tinkers": 0.05, "investigates_why": 0.25, "creates_expresses": 0.1,
+                   "works_with_people": 0.85, "organizes_systems": 0.9, "leads_persuades": 0.8}
+
+
+def make_scored_session(client, token, turns, scores):
+    r = client.post("/api/chat/start", json={"token": token})
+    assert r.status_code == 200, r.text
     sid = r.json()["session_id"]
-    for t in turns:
-        client.post("/api/chat/message", json={"session_id": sid, "message": t})
+    with patch.object(main, "call_llm", lambda messages, system_prompt="", temperature=None: "INTAKE QUESTION?"), \
+         patch.object(main, "score_session", lambda messages: dict(scores)), \
+         patch.object(main, "generate_title", lambda messages: "Test thread"):
+        for t in turns:
+            r = client.post("/api/chat/message", json={"session_id": sid, "token": token, "message": t})
+            assert r.status_code == 200, r.text
+    # An unscored session builds a hub-only tree, which passes every
+    # invariant below without testing anything.
+    assert db.get_latest_inference_scores(sid) is not None, "session was never scored"
     return sid
 
 
@@ -39,6 +56,10 @@ class TestCareerTreeInvariants(unittest.TestCase):
     def setUpClass(cls):
         db.init_db()
         cls.client = TestClient(main.app)
+        email = f"test-tree-{os.urandom(4).hex()}@example.com"
+        r = cls.client.post("/api/auth/signup", json={"email": email, "password": "testpass123"})
+        assert r.status_code == 200, r.text
+        cls.token = r.json()["token"]
 
         biomath_turns = [
             "honestly i've been curious about how diseases spread. during covid we had those graphs in the news every day and now in maths we're doing exponential functions and i realised that's the same thing?? like the curve for cases is basically a formula. also in bio we did the immune system chapter and i kept wondering how scientists predict which virus will come next year",
@@ -49,7 +70,7 @@ class TestCareerTreeInvariants(unittest.TestCase):
             "yeah i think i would! i haven't really made proper models yet, only small calculations in my notebook.",
             "not really sure honestly, i don't know what tools people use. we only learnt a little python in computer class.",
         ]
-        cls.biomath_sid = make_scored_session(cls.client, biomath_turns)
+        cls.biomath_sid = make_scored_session(cls.client, cls.token, biomath_turns, BIOMATH_SCORES)
         cls.biomath_tree = build_career_tree(cls.biomath_sid)
 
         # A genuinely different profile: organizing/leading-heavy,
@@ -65,13 +86,17 @@ class TestCareerTreeInvariants(unittest.TestCase):
             "I'd want to run something bigger next time, maybe with a real budget.",
             "Not sure what tools, just Google Sheets and group chats so far.",
         ]
-        cls.orgleads_sid = make_scored_session(cls.client, orgleads_turns)
+        cls.orgleads_sid = make_scored_session(cls.client, cls.token, orgleads_turns, ORGLEADS_SCORES)
         cls.orgleads_tree = build_career_tree(cls.orgleads_sid)
 
     @classmethod
     def tearDownClass(cls):
         cleanup(cls.biomath_sid)
         cleanup(cls.orgleads_sid)
+        conn = db.get_db()
+        conn.execute("DELETE FROM users WHERE id = ?", (cls.token,))
+        conn.commit()
+        conn.close()
 
     def _check_invariants(self, tree, label):
         nodes = {n["id"]: n for n in tree["nodes"]}
@@ -178,6 +203,7 @@ class TestCareerTreeInvariants(unittest.TestCase):
         # nodes must NOT all connect directly to "you".
         direct_to_hub = [e for e in self.biomath_tree["edges"] if e["source"] == "you"]
         career_count = len([n for n in self.biomath_tree["nodes"] if n["type"] == "career"])
+        self.assertGreater(career_count, 0, "tree has no careers, nothing was tested")
         self.assertLess(len(direct_to_hub), career_count)
 
 

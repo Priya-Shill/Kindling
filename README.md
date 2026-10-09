@@ -118,10 +118,10 @@ The script saves after every batch and resumes if interrupted. `pip install mode
 Run from the repo root:
 
 ```
-python -m unittest Tests.test_topic_selection Tests.test_field_labels Tests.test_career_depth Tests.test_chat_honesty Tests.test_suggested_messages Tests.test_reflection_hide_cache Tests.test_matching Tests.test_shap_explainer
+python -m unittest Tests.test_topic_selection Tests.test_field_labels Tests.test_career_depth Tests.test_chat_honesty Tests.test_suggested_messages Tests.test_reflection_hide_cache Tests.test_matching Tests.test_shap_explainer Tests.test_career_tree
 ```
 
-These 55 tests make no LLM or network calls (AI calls are mocked). Importing the backend still needs the two API keys to be set, and the tests that use the API create and delete their own rows in the local `backend/kindling.db`.
+These 58 tests make no LLM or network calls (AI calls are mocked). Importing the backend still needs the two API keys to be set, and the tests that use the API create and delete their own rows in the local `backend/kindling.db`.
 
 `Tests/test_career_tree.py` is **not** part of this set. See Known Limitations.
 
