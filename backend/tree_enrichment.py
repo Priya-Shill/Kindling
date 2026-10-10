@@ -90,16 +90,32 @@ def _prune_irrelevant_careers(tree: dict) -> dict:
     overlap. The exception is a strong topic match (node["topicMatch"],
     set by career_tree.py from the student's own words without any AI
     call): it stays even when the "why" call fails or returns no
-    quote. A field or area that loses every one of its children this
-    way is a dead end and gets dropped too, same "don't show an empty
-    branch" rule career_tree.py already applies to patterns with zero
-    real candidates in the first place.
+    quote. An area about to lose every career keeps its two
+    best-ranked ones (node["patternAnchor"]) instead, so a pattern the
+    student has real evidence for still shows. A field or area with no
+    children left after that is a dead end and gets dropped too, same
+    "don't show an empty branch" rule career_tree.py already applies
+    to patterns with zero real candidates in the first place.
     """
     keep_ids = {
         n["id"] for n in tree["nodes"]
         if n["type"] != "career" or n.get("relevant", True) or n.get("topicMatch")
     }
-    nodes = [n for n in tree["nodes"] if n["id"] in keep_ids]
+
+    # A pattern the student has real evidence for never disappears just
+    # because nothing they said is about its occupations yet: if every
+    # career under an area would go, its best-ranked ones
+    # (node["patternAnchor"], set by career_tree.py) stay, with the
+    # honest "you haven't talked about this kind of work yet" sentence.
+    careers = [n for n in tree["nodes"] if n["type"] == "career"]
+    parent_of = {n["id"]: n.get("parent") for n in tree["nodes"]}
+    live_areas = {parent_of.get(n["parent"]) for n in careers if n["id"] in keep_ids}
+    keep_ids |= {
+        n["id"] for n in careers
+        if n.get("patternAnchor") and parent_of.get(n["parent"]) not in live_areas
+    }
+
+    nodes =[n for n in tree["nodes"] if n["id"] in keep_ids]
     edges = [e for e in tree["edges"] if e["source"] in keep_ids and e["target"] in keep_ids]
 
     changed = True
@@ -126,6 +142,7 @@ def _prune_irrelevant_careers(tree: dict) -> dict:
             n["why"] = TOPIC_MATCH_WHY
         n.pop("relevant", None)
         n.pop("topicMatch", None)
+        n.pop("patternAnchor", None)
 
     return {"nodes": nodes, "edges": edges}
 

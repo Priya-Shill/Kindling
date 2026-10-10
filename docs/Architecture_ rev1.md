@@ -117,7 +117,7 @@ Field labels are hand-written per SOC group in `backend/soc_titles.py`, not AI-g
 
 ### 4. AI enrichment
 
-`backend/tree_enrichment.py` adds, per career: a short map label, a "why it's connected" sentence, and a "try it" activity. The "why" must contain a verbatim quote from the student, checked in code. A career with no such connection is removed from the tree, unless it is a guaranteed topic match. All generated strings are cached in the `generated_strings` table.
+`backend/tree_enrichment.py` adds, per career: a short map label, a "why it's connected" sentence, and a "try it" activity. The "why" must contain a verbatim quote from the student, checked in code. A career with no such connection is removed from the tree, unless it is a guaranteed topic match. If that would remove every career under a pattern, the pattern's two best-ranked careers stay, with a fixed sentence (no quote) saying the student has not talked about that kind of work yet. All generated strings are cached in the `generated_strings` table.
 
 ### 5. Layered depth
 

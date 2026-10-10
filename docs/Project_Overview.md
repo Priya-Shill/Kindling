@@ -50,6 +50,6 @@ The 6 scores are one half of career matching. Occupations are chosen by code fro
 
 The Career Graph then adds depth on request: "Show more" layers of real occupations (no AI call), AI-generated example specialisations shown as hollow nodes, and "Where this work happens" in the career panel. Field names are hand-written per SOC group, with the official title shown alongside.
 
-**Grounding, and its limits.** Occupations, descriptions, and tasks are real O*NET data, and each "why it's connected" sentence must quote the student verbatim. The named workplace examples and the example specialisations are AI-generated and are not verified; they are labelled as examples.
+**Grounding, and its limits.** Occupations, descriptions, and tasks are real O*NET data, and each AI-written "why it's connected" sentence must quote the student verbatim; a career shown without such a quote carries a fixed sentence that says so. The named workplace examples and the example specialisations are AI-generated and are not verified; they are labelled as examples.
 
 See `Architecture_ rev1.md` for detail and the README for known limitations.

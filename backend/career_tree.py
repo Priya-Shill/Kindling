@@ -799,6 +799,10 @@ def build_career_tree_core(scores: dict, decisions: dict, hidden_ids: frozenset,
     for pattern in shown_patterns:
         letter = AXIS_TO_LETTER[pattern]
         area_id = f"p:{letter}"
+        # This pattern's best-ranked real occupations - tree_enrichment
+        # keeps these if the relevance prune would otherwise leave the
+        # area with nothing under it.
+        anchor_ids = {occ["id"] for occ in selected_by_pattern[pattern][:MIN_PER_PATTERN]}
         nodes.append({
             "id": area_id, "type": "area", "label": AXIS_LABELS[pattern],
             "riasec": letter, "parent": "you",
@@ -832,6 +836,8 @@ def build_career_tree_core(scores: dict, decisions: dict, hidden_ids: frozenset,
                     # tree_enrichment keeps these even if the AI
                     # "why" call fails or finds no quote.
                     nodes[-1]["topicMatch"] = True
+                if occ["id"] in anchor_ids:
+                    nodes[-1]["patternAnchor"] = True
                 edges.append({"source": field_id, "target": occ_node_id, "kind": "branch"})
 
     cross_links = compute_cross_links(all_selected, pattern_by_occ_id, high_points)

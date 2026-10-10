@@ -1,7 +1,8 @@
 """
 Career Graph selection: hybrid ranking (RIASEC fit + local topic
-relevance). Fully deterministic - no AI call, no network, no
-database. Run from the repo root.
+relevance). Fully deterministic - no AI call (mocked where the
+enrichment step would make one), no network, no database. Run from
+the repo root.
 
 The scores below are what the real scorer returned for each
 conversation; they're fixed here so the test doesn't depend on it.
@@ -11,6 +12,7 @@ import json
 import os
 import sys
 import unittest
+from unittest import mock
 
 ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT_DIR)
@@ -21,6 +23,7 @@ sys.path.insert(0, os.path.join(ROOT_DIR, "ai_core"))
 import career_tree
 import topic_relevance
 import tree_enrichment
+import tree_naming
 
 with open(os.path.join(ROOT_DIR, "Outputs", "career_graph.json"), encoding="utf-8") as f:
     OCCUPATIONS = json.load(f)
@@ -282,6 +285,101 @@ class TestPruneKeepsTopicMatches(unittest.TestCase):
         self.assertNotIn("o:2", kept)
         self.assertEqual(kept["o:1"]["why"], tree_enrichment.TOPIC_MATCH_WHY)
         self.assertNotIn("topicMatch", kept["o:1"])
+
+
+# A student who only talks about dancing but whose scores also show
+# two other patterns: nothing they said is about those patterns' work.
+BRANCH_SCORES = {"builds_tinkers": 0.05, "investigates_why": 0.4, "creates_expresses": 0.85,
+                 "works_with_people": 0.3, "organizes_systems": 0.2, "leads_persuades": 0.1}
+BRANCH_EVIDENCE = SCENARIOS["dancing"]["evidence"]
+BRANCH_QUOTE = "watch myself in the mirror"
+
+INTERNAL_KEYS = {"patternAnchor", "topicMatch", "relevant", "score", "scores", "similarity",
+                 "hybrid", "fit", "topic", "rank"}
+
+
+class TestPatternBranchSurvivesPrune(unittest.TestCase):
+    """The whole enrichment path with the LLM mocked: no network, and
+    the generated-strings cache is bypassed, so no database either."""
+
+    @classmethod
+    def setUpClass(cls):
+        shown = career_tree.determine_shown_patterns(BRANCH_SCORES, {})
+        cls.selected, _ = career_tree.select_occupations(
+            BRANCH_SCORES, shown, career_tree.load_interest_high_points(), evidence_text=BRANCH_EVIDENCE)
+
+    def enrich(self, connected_titles=()):
+        """The final tree when the "why" call finds a real quote only
+        for connected_titles and no specific connection for the rest."""
+        def fake_call_llm(messages, system_prompt, temperature=None, **kwargs):
+            if system_prompt == tree_naming.WHY_CONNECTED_SYSTEM_PROMPT:
+                title = messages[0]["content"].split("\n", 1)[0][len("Occupation: "):]
+                if title in connected_titles:
+                    return json.dumps({"connected": True, "why": f'You said you "{BRANCH_QUOTE}" to get it right.'})
+            return json.dumps({"connected": False})
+
+        tree = career_tree.build_career_tree_core(BRANCH_SCORES, {}, frozenset(), frozenset(), [], BRANCH_EVIDENCE)
+        messages = [{"role": "user", "content": line} for line in BRANCH_EVIDENCE.split("\n")]
+        with mock.patch.object(tree_naming, "call_llm", fake_call_llm), \
+                mock.patch.object(tree_enrichment, "get_cached_string", return_value=None), \
+                mock.patch.object(tree_enrichment, "set_cached_string"):
+            return tree_enrichment.enrich_tree_with_ai(tree, messages)
+
+    @staticmethod
+    def careers_under(tree, area_id):
+        by_id = {n["id"]: n for n in tree["nodes"]}
+        return [n for n in tree["nodes"]
+                if n["type"] == "career" and by_id[n["parent"]]["parent"] == area_id]
+
+    def test_area_with_every_career_dropped_keeps_its_top_two(self):
+        tree = self.enrich()
+        self.assertIn("p:I", [n["id"] for n in tree["nodes"] if n["type"] == "area"])
+
+        kept = self.careers_under(tree, "p:I")
+        top_two = [occ["id"] for occ in self.selected["investigates_why"][:2]]
+        self.assertEqual(sorted(n["soc"] for n in kept), sorted(top_two))
+        for node in kept:
+            self.assertEqual(
+                node["why"],
+                "This shares the Investigates why pattern with what you've explored, "
+                "but you haven't talked about this kind of work yet.",
+            )
+
+    def test_area_with_a_surviving_career_is_unchanged(self):
+        # Third-ranked, so it is not one of the two that would be kept anyway.
+        survivor = self.selected["investigates_why"][2]
+        tree = self.enrich(connected_titles={survivor["title"]})
+
+        kept = self.careers_under(tree, "p:I")
+        self.assertEqual([n["soc"] for n in kept], [survivor["id"]])
+        self.assertIn(BRANCH_QUOTE, kept[0]["why"])
+
+        # Create & express survives on its topic matches alone.
+        topic_matches = set(topic_relevance.topic_relevance(BRANCH_EVIDENCE)[1])
+        self.assertEqual({n["soc"] for n in self.careers_under(tree, "p:A")}, topic_matches)
+
+    def test_no_internal_flag_or_number_reaches_the_final_tree(self):
+        def walk(value, path):
+            if isinstance(value, dict):
+                for key, item in value.items():
+                    self.assertNotIn(key, INTERNAL_KEYS, path)
+                    walk(item, f"{path}.{key}")
+            elif isinstance(value, list):
+                for item in value:
+                    walk(item, path)
+            else:
+                # No number of any kind is sent to the browser.
+                self.assertIsInstance(value, str, path)
+
+        tree = self.enrich()
+        walk(tree, "tree")
+        self.assertTrue(self.careers_under(tree, "p:I"))
+        for node in tree["nodes"]:
+            if node["type"] == "career":
+                why = node["why"].lower()
+                for banned in ("%", "percent", "score"):
+                    self.assertNotIn(banned, why, node["fullTitle"])
+                self.assertNotRegex(why, r"\d")
 
 
 if __name__ == "__main__":

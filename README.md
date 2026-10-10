@@ -56,7 +56,7 @@ Which careers appear is decided by code, not by the LLM. Every career node is a 
 * **Local embedding similarity.** The student's own typed words are compared with each occupation's title, description, and sample tasks using `minishlab/potion-base-8M`, a static embedding model. It is loaded with `tokenizers` + `numpy` only (`backend/local_embedder.py`). No embedding API is called, and no `fastembed`, `model2vec`, or PyTorch is needed at runtime.
 * **BM25 lexical boost.** Literal word overlap with the occupation text, applied only where the embedding already agrees, so a coincidental shared word does not promote an unrelated job.
 
-Up to four strong topic matches are selected first, before any quota, so a student who talks about dancing sees *Dancers*. The remaining slots keep the existing diversity rules (18 careers targeted, at most 5 per field, no pattern above half the total). An AI step then writes each career's "why" from a verbatim student quote and removes careers it cannot connect to anything the student said; strong topic matches are kept regardless.
+Up to four strong topic matches are selected first, before any quota, so a student who talks about dancing sees *Dancers*. The remaining slots keep the existing diversity rules (18 careers targeted, at most 5 per field, no pattern above half the total). An AI step then writes each career's "why" from a verbatim student quote and removes careers it cannot connect to anything the student said; strong topic matches are kept regardless. A pattern that would lose every career this way keeps its two best-ranked ones, with a sentence saying plainly that the student has not talked about that kind of work yet.
 
 ### Career Graph depth
 
@@ -121,7 +121,7 @@ Run from the repo root:
 python -m unittest Tests.test_topic_selection Tests.test_field_labels Tests.test_career_depth Tests.test_chat_honesty Tests.test_suggested_messages Tests.test_reflection_hide_cache Tests.test_matching Tests.test_shap_explainer Tests.test_career_tree
 ```
 
-These 58 tests make no LLM or network calls (AI calls are mocked). Importing the backend still needs the two API keys to be set, and the tests that use the API create and delete their own rows in the local `backend/kindling.db`.
+These 61 tests make no LLM or network calls (AI calls are mocked). Importing the backend still needs the two API keys to be set, and the tests that use the API create and delete their own rows in the local `backend/kindling.db`.
 
 `Tests/test_career_tree.py` is **not** part of this set. See Known Limitations.
 
